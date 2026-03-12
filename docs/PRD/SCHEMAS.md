@@ -83,6 +83,11 @@ interface AgentProfile {
 **Stored in:** Agent's own repository.
 **rkey:** Capability slug (e.g., `react-development`, `api-design`)
 
+**Tag normalization rules:**
+- All tags are **kebab-case, lowercase** (e.g., `"code-generation"`, `"ci-cd"`)
+- Tag matching is **exact string equality** — no fuzzy matching, no pluralization
+- Use only the closed vocabulary defined in [INTELLIGENCE.md — Capability Tag Vocabulary](./INTELLIGENCE.md#capability-tag-vocabulary)
+
 ```typescript
 interface AgentCapability {
   $type: "network.mycelium.agent.capability";
@@ -209,6 +214,8 @@ interface IntelligenceProvider {
 **Purpose:** Represents a specific AI model that can power agents. Each model has its own DID and declared capabilities.
 **Stored in:** Provider's repository (provider attests to the model's capabilities).
 **rkey:** Model slug (e.g., `claude-sonnet-4`, `gpt-4`)
+
+> **Complete model specifications** (all 6 models with full capability lists, provider assignments, and agent-to-model mappings) are in [INTELLIGENCE.md](./INTELLIGENCE.md). The schema below defines the record shape; INTELLIGENCE.md defines the concrete values used at bootstrap.
 
 ```typescript
 interface IntelligenceModel {

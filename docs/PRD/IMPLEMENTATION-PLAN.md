@@ -23,17 +23,24 @@ Phase 7: E2E Demo & Dashboard           █████████████�
 
 **Goal:** Set up the TypeScript project with tooling.
 
+**Node.js:** Requires **Node.js 20 LTS** or higher. (`node --version` should show `v20.x.x` or later.)
+
 **Tasks:**
 1. Initialize Node.js project with TypeScript
-2. Install core dependencies:
-   - `better-sqlite3` — SQLite for agent repositories
-   - `@noble/ed25519` — Ed25519 crypto for DID and signing
-   - `zod` — Schema validation
-   - `chalk` — Colored CLI output
-   - `cli-table3` — Formatted CLI tables
-   - `fastify` — Lightweight HTTP server for dashboard
-   - `tsx` — Fast TypeScript execution
-   - `vitest` — Testing
+2. Install core dependencies (pinned versions):
+   ```
+   better-sqlite3@^9.4.3   — SQLite for agent repositories
+   @noble/ed25519@^2.0.0   — Ed25519 crypto for DID and signing
+   @noble/hashes@^1.3.3    — SHA-256 for commit hashing
+   bs58@^6.0.0             — Base58-btc encoding for DID generation
+   zod@^3.23.8             — Schema validation
+   chalk@^5.3.0            — Colored CLI output
+   cli-table3@^0.6.5       — Formatted CLI tables
+   fastify@^4.26.2         — Lightweight HTTP server for dashboard
+   tsx@^4.7.1              — Fast TypeScript execution (development)
+   vitest@^1.3.1           — Testing
+   @types/better-sqlite3@^7.6.8  — TypeScript types for SQLite
+   ```
 3. Configure `tsconfig.json` with strict mode
 4. Set up project structure:
 
@@ -502,7 +509,8 @@ shouldFail = Math.random() < agent.failRate
 ```
 
 **Simulated execution:**
-- Delay proportional to task complexity (low: 1-3s, medium: 3-8s, high: 8-15s)
+- Delay determined by `BASE_EXECUTION_TIME_MS[complexity] × speedMultiplier × jitter` (see [Constants](#constants))
+  - After applying all multipliers: low ≈ 1.6–2.4s, medium ≈ 4–6s, high ≈ 8–12s
 - Generate mock artifacts (file names, hashes, line counts)
 - Quality scores slightly randomized around agent tendencies
 - Occasional failures (5% chance) to test rejection flow
@@ -750,9 +758,41 @@ Mock data should tell a **compelling story**, not be random noise. The demo narr
 | 8 | Deploy to staging | devops, deployment | low | delta |
 
 ### Timing Simulation
-- Tasks execute with simulated delays (1-15 seconds)
-- Some tasks depend on others (API before auth, components before tests)
-- The demo runs in ~60-90 seconds total
+
+**The simulated time model:** Real execution delays are short (seconds), but `task.completion.executionTime` records realistic human-scale durations (minutes). These are **two different things**:
+
+| Concept | Where | Value | Purpose |
+|---------|-------|-------|---------|
+| Real delay | `setTimeout` in `agents/engine.ts` | 1.6s – 14s | Paces the demo so events are visible |
+| Simulated duration | `task.completion.executionTime` field | `"PT30M"` – `"PT2H"` | Narrative realism; what a real team would take |
+
+**Real delay formula** (from [Constants](#constants)):
+```typescript
+const delay = BASE_EXECUTION_TIME_MS[task.complexity] * agent.speedMultiplier * (0.8 + Math.random() * 0.4);
+// low: ~1.6s – 2.4s, medium: ~4s – 6s, high: ~8s – 12s
+```
+
+**Simulated duration formula** (for `executionTime` field):
+```typescript
+const simulatedMinutes = SIMULATED_DURATION_MINUTES[task.complexity] * agent.speedMultiplier;
+const executionTime = `PT${Math.round(simulatedMinutes)}M`;  // ISO 8601 duration
+// low: ~24–45min, medium: ~48–80min, high: ~80–125min
+```
+
+**Pre-defined `executionTime` values for the 8 demo tasks:**
+
+| Task | Complexity | Assigned To | executionTime |
+|------|-----------|-------------|---------------|
+| Design component library | medium | atlas | `"PT52M"` |
+| Build REST API | medium | beacon | `"PT40M"` |
+| Implement authentication | high | cipher | `"PT96M"` |
+| Set up CI/CD pipeline | medium | delta | `"PT45M"` |
+| Create agent profile cards | low | atlas | `"PT24M"` |
+| Build firehose event stream UI | high | forge | `"PT125M"` |
+| Write integration tests | medium | echo | `"PT50M"` |
+| Deploy to staging | low | delta | `"PT18M"` |
+
+The demo runs in **60–90 seconds total** (real time). The `executionTime` values are stored in records to show what a realistic project would look like.
 
 ### Quality Variation
 - Each agent has a quality "center" with ±10% random variation
@@ -767,6 +807,143 @@ Mock data should tell a **compelling story**, not be random noise. The demo narr
 3. **Rejection**: One completion fails review; agent reworks it
 4. **Trust bootstrapping**: Forge (generalist) starts with less reputation; limited to simpler tasks
 5. **Migration**: Atlas migrates to a new orchestrator with reputation intact
+
+---
+
+## Bootstrap Sequence
+
+This is the **exact initialization order** that `demo/run.ts` (and `demo/dashboard/server.ts`) must follow. Order matters — Firehose must exist before any subscriptions, and subscriptions must exist before records are written (so no events are missed).
+
+```
+Step 1: Create Firehose
+  firehose = createFirehose()
+  // Must be first — all subsequent writes emit events.
+
+Step 2: Register Mayor's firehose subscription
+  mayor = createMayor(firehose, ...)
+  mayor.subscribeToFirehose(firehose)
+  // Must happen BEFORE any records are written.
+  // If Mayor subscribes after agents are bootstrapped,
+  // it misses the agent.profile events and can't build its registry.
+
+Step 3: Register dashboard subscription (dashboard mode only)
+  if (mode === 'dashboard') {
+    dashboardServer.subscribeToFirehose(firehose)
+  }
+
+Step 4: Bootstrap intelligence providers
+  { githubModels, ollama } = await bootstrapIntelligence(firehose)
+  // Generates 2 provider identities + repos
+  // Writes intelligence.provider records → 2 Firehose events
+
+Step 5: Bootstrap intelligence models
+  // Generates 6 model identities
+  // Writes intelligence.model records into provider repos → 6 Firehose events
+  // Updates provider records with modelsOffered[] DIDs → 2 more Firehose events
+
+Step 6: Generate agent identities (6 workers + 1 Mayor)
+  agents = AGENT_ROSTER.map(def => generateIdentity(def.handle, def.displayName))
+  mayorIdentity = generateIdentity("mayor.mycelium.local", "Mayor (Orchestrator)")
+
+Step 7: Create agent repositories
+  agentRepos = agents.map(a => createRepository(a.did))
+  mayorRepo = createRepository(mayorIdentity.did)
+
+Step 8: Write agent.profile records (each in own repo)
+  // → 7 Firehose events (6 workers + Mayor)
+
+Step 9: Write agent.capability records (each in own repo)
+  // → 18 Firehose events (3 per agent × 6 agents)
+
+Step 10: Bootstrap complete
+  // Total Firehose events: ~35
+  // Mayor is now subscribed and has seen all agent profiles
+  // System is ready to accept a project spec
+```
+
+**`maxConcurrentTasks` enforcement:** The `maxConcurrentTasks` field in `agent.profile` is **advisory only** in the MVP. The orchestrator reads it during assignment scoring but does not hard-block assignments if exceeded. Full enforcement is a future-phase feature.
+
+---
+
+## Constants
+
+All magic numbers used throughout the MVP. Define these in `src/constants.ts` and import from there — do not hardcode values in individual modules.
+
+```typescript
+// src/constants.ts
+
+export const CONSTANTS = {
+
+  // ─── Execution Timing ─────────────────────────────────────────────────
+  // Real delays (milliseconds) used in setTimeout during agent execution
+  BASE_EXECUTION_TIME_MS: {
+    low: 2000,      // 2 seconds
+    medium: 5000,   // 5 seconds
+    high: 10000,    // 10 seconds
+  },
+  // Jitter multiplier range: actual delay = base × speedMult × random(0.8, 1.2)
+  EXECUTION_JITTER_MIN: 0.8,
+  EXECUTION_JITTER_MAX: 1.2,
+
+  // Simulated duration (minutes) stored in task.completion.executionTime
+  SIMULATED_DURATION_MINUTES: {
+    low: 30,        // ~24-45min after speedMult
+    medium: 60,     // ~48-80min after speedMult
+    high: 100,      // ~80-125min after speedMult
+  },
+
+  // ─── Reputation Weights ───────────────────────────────────────────────
+  // Overall score = weighted sum of dimension scores
+  REPUTATION_DIMENSION_WEIGHTS: {
+    codeQuality:    0.30,
+    reliability:    0.25,
+    efficiency:     0.20,
+    communication:  0.15,
+    creativity:     0.10,
+  },
+
+  // Recency weighting for aggregation
+  REPUTATION_RECENCY_RECENT:  1.0,   // Last 5 stamps
+  REPUTATION_RECENCY_MID:     0.8,   // Stamps 6–15
+  REPUTATION_RECENCY_OLD:     0.5,   // Stamps 16+
+
+  // Domain relevance weighting
+  REPUTATION_DOMAIN_MATCH:    1.0,   // Stamp domain matches query domain
+  REPUTATION_DOMAIN_OTHER:    0.7,   // Stamp domain does not match
+
+  // ─── Trust Level Thresholds ───────────────────────────────────────────
+  TRUST_LEVELS: {
+    newcomer:    { minTasks: 0,  minAvgScore: 0  },
+    established: { minTasks: 3,  minAvgScore: 60 },
+    trusted:     { minTasks: 10, minAvgScore: 75 },
+    expert:      { minTasks: 25, minAvgScore: 85 },
+  },
+
+  // ─── Trend Detection ──────────────────────────────────────────────────
+  TREND_WINDOW_SIZE: 5,       // Evaluate last N stamps for trend
+  TREND_DELTA_THRESHOLD: 5,   // Score change ≥5 = improving/declining; <5 = stable
+
+  // ─── Ranking / Assignment ─────────────────────────────────────────────
+  RANK_WEIGHT_CAPABILITY:    0.40,
+  RANK_WEIGHT_REPUTATION:    0.35,
+  RANK_LOAD_PENALTY:        15,    // Points deducted per active task
+  RANK_CONFIDENCE_BONUS: {
+    low:    0,
+    medium: 5,
+    high:   10,
+  },
+  RANK_NEWCOMER_REPUTATION:  50,   // Neutral score for agents with no reputation yet
+  RANK_HIGH_COMPLEXITY_MIN_TRUST: "established" as const,  // Newcomers can't take high tasks
+
+  // ─── Capability Matching ──────────────────────────────────────────────
+  // Tags are kebab-case, lowercase, exact string match. See INTELLIGENCE.md for full vocabulary.
+  CAPABILITY_TAG_MATCH: "exact",   // No fuzzy matching in MVP
+
+  // ─── Firehose ─────────────────────────────────────────────────────────
+  FIREHOSE_SEQ_START: 1,   // seq counter starts at 1 (not 0)
+
+} as const;
+```
 
 ---
 

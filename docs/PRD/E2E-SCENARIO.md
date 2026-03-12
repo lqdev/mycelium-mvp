@@ -2,6 +2,8 @@
 
 > Detailed walkthrough of what the demo does, what the user sees, and what each step proves about the architecture.
 
+> **Simulated Time Model:** The demo runs in **60–90 seconds real time**, but `task.completion.executionTime` fields record realistic durations like `"PT52M"` (52 minutes). These are narrative values — they represent what a real software team would take, stored in records for realism. The actual `setTimeout` delay per task is 1.6–12 seconds depending on complexity and agent speed. See [IMPLEMENTATION-PLAN.md Constants](./IMPLEMENTATION-PLAN.md#constants) for exact values.
+
 ---
 
 ## Scenario: "Build the Mycelium Dashboard"

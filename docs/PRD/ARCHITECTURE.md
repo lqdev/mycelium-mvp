@@ -400,6 +400,8 @@ Implements the Wanted Board protocol — the decentralized task marketplace wher
                     └─────────────┘
 ```
 
+**Terminology Note:** "Orchestrator" and "Mayor" are synonymous throughout the codebase. The module lives at `src/orchestrator/mayor.ts`. The term "Mayor" is used in narrative descriptions; "Orchestrator" is used in architectural descriptions. When you see either term, it refers to the same component.
+
 **Orchestrator ("Mayor") Logic:**
 1. Receives a high-level project request
 2. Decomposes into atomic tasks with required capabilities
@@ -410,6 +412,11 @@ Implements the Wanted Board protocol — the decentralized task marketplace wher
 7. Monitors for `task.completion` events
 8. Reviews and accepts/rejects completions
 9. Issues `reputation.stamp` for accepted work
+
+**`agentType` field values in `agent.profile`:**
+- `"worker"` — A task-executing agent (all 6 demo agents)
+- `"orchestrator"` — The Mayor (decomposes + assigns work)
+- `"supervisor"` and `"labeler"` — **Reserved for future use; not implemented in the MVP.** A `supervisor` would oversee a group of workers; a `labeler` would independently verify task quality. These types are valid in the schema but will never appear in the demo bootstrap.
 
 ---
 
@@ -533,6 +540,60 @@ Mock agents with predefined capabilities, behaviors, and simulated task executio
    ├─ "Migrate" to a new orchestrator context
    └─ Show reputation and history intact in new context
 ```
+
+---
+
+## Module Dependency Graph
+
+Use this graph to determine **build order**: implement lower layers before higher layers. No circular dependencies.
+
+```
+Layer 0 — Leaf nodes (external deps only, no internal imports)
+  schemas/types.ts       ← zod (external)
+  identity/index.ts      ← @noble/ed25519, @noble/hashes, bs58 (external)
+
+Layer 1 — Depends on Layer 0
+  schemas/index.ts       ← schemas/types.ts, zod
+  repository/index.ts    ← identity/, schemas/types.ts, better-sqlite3
+  firehose/index.ts      ← schemas/types.ts
+  reputation/formulas.ts ← schemas/types.ts
+  orchestrator/state-machine.ts  ← schemas/types.ts
+
+Layer 2 — Depends on Layer 1
+  intelligence/index.ts          ← identity/, repository/, schemas/
+  reputation/index.ts            ← identity/, repository/, firehose/, schemas/, reputation/formulas.ts
+  orchestrator/wanted-board.ts   ← repository/, firehose/, schemas/, orchestrator/state-machine.ts
+
+Layer 3 — Depends on Layer 2
+  agents/roster.ts               ← schemas/types.ts, intelligence/
+  orchestrator/mayor.ts          ← orchestrator/wanted-board.ts, reputation/, repository/,
+                                    firehose/, schemas/, agents/roster.ts
+
+Layer 4 — Depends on Layer 3
+  agents/engine.ts               ← identity/, repository/, firehose/,
+                                    orchestrator/wanted-board.ts, schemas/, agents/roster.ts
+
+Layer 5 — Integration (imports everything)
+  demo/run.ts                    ← ALL modules
+  demo/dashboard/server.ts       ← firehose/, orchestrator/, reputation/, agents/, intelligence/
+  demo/dashboard/api.ts          ← firehose/, orchestrator/, reputation/, agents/
+```
+
+**Key rules:**
+1. `schemas/types.ts` is the universal shared type file — **every module can import it**
+2. `firehose` is created at program startup and passed as a parameter; modules don't import each other's instances
+3. `demo/run.ts` is the only file that wires everything together — all other modules are independent
+
+---
+
+## Firehose Event Ordering
+
+- `seq` is a **strictly increasing integer counter**, starting at 1, managed by the in-memory Firehose instance
+- Events are emitted synchronously during `putRecord()` calls (same tick), so ordering matches write order
+- The event log is **append-only** — no retractions or updates; a record update emits a new event
+- Subscribers **cannot rewind** to earlier events after subscribing — they only receive events emitted after their subscription is registered. Exception: the dashboard calls `getEventLog()` on startup to replay history
+- **Backpressure:** MVP uses synchronous EventEmitter handlers. If a handler is slow, it blocks the emitter. For MVP simplicity this is acceptable — all handlers complete quickly (no real I/O)
+- **Error handling:** If a subscriber handler throws, the Firehose catches the error, logs it with `console.error`, and continues delivering to other subscribers. It does **not** propagate the error to the record writer
 
 ---
 
