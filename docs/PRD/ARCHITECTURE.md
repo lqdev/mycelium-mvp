@@ -117,8 +117,9 @@ Input:  identity (AgentIdentity), record (any valid record object)
 Output: { sig, signerDid }
 
 1. Canonical serialization:
-   canonical = JSON.stringify(record, Object.keys(record).sort())
-   // Keys sorted alphabetically for deterministic output
+   canonical = canonicalize(record)
+   // Recursively sorts all object keys alphabetically at every nesting level.
+   // See canonicalize() implementation below.
 
 2. Convert to bytes:
    bytes = new TextEncoder().encode(canonical)
@@ -144,7 +145,7 @@ Output: boolean
    publicKey = multicodecBytes.slice(2)   // Remove 0xed01 prefix → 32-byte key
 
 2. Reconstruct canonical bytes:
-   canonical = JSON.stringify(record, Object.keys(record).sort())
+   canonical = canonicalize(record)
    bytes = new TextEncoder().encode(canonical)
 
 3. Decode signature:
@@ -154,7 +155,27 @@ Output: boolean
    return ed25519.verify(signature, bytes, publicKey)
 ```
 
-**Canonical JSON rule:** `JSON.stringify(record, Object.keys(record).sort())` — keys sorted alphabetically at every nesting level. This ensures the same record always produces the same bytes regardless of property insertion order.
+**Canonical JSON Implementation:**
+
+```typescript
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return '[' + value.map(item => canonicalize(item)).join(',') + ']';
+  }
+  const sortedKeys = Object.keys(value as Record<string, unknown>).sort();
+  const entries = sortedKeys.map(key =>
+    JSON.stringify(key) + ':' + canonicalize((value as Record<string, unknown>)[key])
+  );
+  return '{' + entries.join(',') + '}';
+}
+```
+
+This recursively sorts keys at every nesting depth, producing deterministic output regardless of property insertion order. `JSON.stringify`'s replacer array does **not** work for this — it only filters top-level keys and does not sort nested objects.
+
+**Base64url encoding:** Use Node.js built-in `Buffer.from(signature).toString('base64url')` (available since Node 16+). For decoding: `Buffer.from(sig, 'base64url')`. No external package needed.
 
 ---
 
@@ -166,8 +187,47 @@ SQLite-backed record store implementing the "Personal Data Server" concept. Each
 - Create and manage per-agent SQLite databases
 - Store typed records organized by collection (NSID)
 - Maintain a commit log (simplified Merkle chain)
-- Emit events on record creation/update/deletion
+- Emit events to the Firehose on record creation/update/deletion
 - Support full repository export (for portability demos)
+
+**Key Types:**
+```typescript
+interface AgentRepository {
+  did: string;                     // DID of the entity that owns this repo
+  db: Database;                    // better-sqlite3 Database instance
+  dbPath: string;                  // e.g., "./data/z6MkhaX...doK.db"
+  identity: AgentIdentity;         // For signing records on write
+  firehose: Firehose | null;       // If set, emits events on write. Null for isolated repos (tests).
+}
+
+interface RecordResult {
+  uri: string;                     // AT URI: "at://{did}/{collection}/{rkey}"
+  cid: string;                     // Content hash (SHA-256 of canonical JSON)
+  commit: {
+    seq: number;                   // Commit sequence number in this repo
+    operation: "create" | "update";
+    repoRootHash: string;          // New rolling hash after this commit
+  };
+}
+```
+
+**Repository creation:** `createRepository` receives the identity (for signing) and optionally a Firehose reference. If firehose is provided, every `putRecord` call automatically emits a `FirehoseEvent` after the write succeeds. The `./data/` directory is auto-created if it does not exist (use `fs.mkdirSync(dir, { recursive: true })`).
+
+```typescript
+// Core operations:
+// - createRepository(identity: AgentIdentity, firehose?: Firehose) → AgentRepository
+// - putRecord(repo, collection, rkey, content) → RecordResult      // upsert: creates OR updates
+// - getRecord(repo, collection, rkey) → Record | null
+// - listRecords(repo, collection) → Record[]
+// - deleteRecord(repo, collection, rkey) → void
+// - exportRepository(repo) → RepositoryExport
+// - importRepository(exportData, identity, firehose?) → AgentRepository
+// - getCommitLog(repo) → Commit[]
+```
+
+**`putRecord` is an upsert:** If a record with the same `(collection, rkey)` already exists, it is updated (the commit log entry will have `operation: "update"`). If it doesn't exist, it's created (`operation: "create"`). The repo checks for existence via `SELECT 1 FROM records WHERE collection = ? AND rkey = ?` before deciding.
+
+**Signing happens inside `putRecord`:** The repo holds the `identity` and signs every record automatically. The caller passes plain `content`; the repo calls `signRecord(repo.identity, content)` and stores the resulting `sig` alongside the content. This keeps signing centralized and prevents unsigned writes.
 
 **Storage Schema:**
 ```sql
@@ -210,8 +270,8 @@ Input:  operation ("create"|"update"|"delete"), recordUri, content, previousComm
 Output: Commit record
 
 1. Hash the record content:
-   contentHash = SHA-256(JSON.stringify(content, Object.keys(content).sort()))
-   // Same canonical serialization as signing
+   contentHash = SHA-256(canonicalize(content))
+   // Uses the same canonicalize() function as signing
 
 2. Compute repo root hash (chain link):
    if previousCommit exists:
@@ -262,7 +322,7 @@ Manages intelligence provider and model identities. Providers and models are fir
 - Enable agents to reference intelligences by DID (not hard-coded strings)
 - Support intelligence discovery (find models by capability/domain)
 
-**Key Types:**
+**Key Types (abbreviated — [SCHEMAS.md](./SCHEMAS.md) is authoritative for full field definitions including `$type`, `operator`, `trustSignals`, timestamps):**
 ```typescript
 interface IntelligenceProvider {
   did: string;                          // Provider's DID
@@ -296,7 +356,7 @@ For prototyping, we use a **two-provider architecture**:
    - Single point of control for cloud-based AI in the MVP
    - Endpoint: GitHub Models API (documented but mocked in MVP)
 2. **Local Ollama** (`providerType: "local"`) — Self-hosted local inference
-   - Includes Llama 3.1 (70B), CodeLlama, and other open-source models
+   - Includes Llama 3 (70B), CodeLlama, and other open-source models
    - Endpoint: `http://localhost:11434` (configurable)
    - For local-first experimentation
 
@@ -352,14 +412,25 @@ interface FirehoseEvent {
 }
 
 interface FirehoseSubscription {
-  id: string;
+  id: string;                      // crypto.randomUUID()
   filter?: {
     collections?: string[];        // Only receive events for these NSIDs
     dids?: string[];               // Only receive events from these agents
   };
   handler: (event: FirehoseEvent) => void | Promise<void>;
 }
+
+// Container type — the Firehose instance itself
+interface Firehose {
+  seq: number;                     // Current sequence counter (starts at 1)
+  log: FirehoseEvent[];            // Append-only event log (for replay via getEventLog)
+  subscriptions: Map<string, FirehoseSubscription>;
+}
 ```
+
+**Filter semantics:** When both `collections` and `dids` are provided, they combine as **AND** — an event must match at least one listed collection AND at least one listed DID. If only one filter is provided, only that filter is checked. If no filter is provided, the subscriber receives all events.
+
+**Subscription lifecycle:** `subscribe()` returns the subscription ID (UUID). `unsubscribe()` removes the subscription by ID — if a handler is currently mid-execution when `unsubscribe` is called, it finishes the current event but receives no further events.
 
 **MVP Simplification:** In-process EventEmitter instead of WebSocket stream. Same event semantics, no network layer. Upgrade path: replace EventEmitter with WebSocket server + Jetstream-style filtering.
 
@@ -370,21 +441,26 @@ interface FirehoseSubscription {
 Implements the Wanted Board protocol — the decentralized task marketplace where work is posted, discovered, claimed, and completed.
 
 **State Machine:**
+
+> **Note:** The diagram below shows **conceptual** stages. The actual `task.posting.status` field uses only the values defined in [SCHEMAS.md](./SCHEMAS.md): `open | claimed | assigned | in_progress | completed | accepted | closed`. "POSTED" maps to `open` (initial state). "DISCOVERED" is not a status — it's an internal agent evaluation that doesn't change the record.
+
 ```
                     ┌─────────────┐
-                    │   POSTED    │ ← task.posting created
+                    │    OPEN     │ ← task.posting created (status: "open")
                     └──────┬──────┘
-                           │ agent discovers via firehose
-                    ┌──────▼──────┐
-                    │  DISCOVERED │ ← agent evaluates capabilities
-                    └──────┬──────┘
+                           │ agent discovers via firehose (no status change)
+                           │ agent evaluates capabilities
                            │ agent creates task.claim
                     ┌──────▼──────┐
-                    │   CLAIMED   │ ← orchestrator reviews claims
+                    │   CLAIMED   │ ← first claim received
                     └──────┬──────┘
                            │ orchestrator assigns
                     ┌──────▼──────┐
                     │  ASSIGNED   │ ← agent begins work
+                    └──────┬──────┘
+                           │ agent self-transitions on receipt of assignment
+                    ┌──────▼──────┐
+                    │ IN_PROGRESS │ ← agent working
                     └──────┬──────┘
                            │ agent creates task.completion
                     ┌──────▼──────┐
@@ -445,7 +521,8 @@ interface AggregatedReputation {
   did: string;
   totalTasks: number;
   averageScores: ReputationDimensions;
-  taskBreakdown: Record<string, number>;  // capability → count
+  overallScore: number;               // Weighted aggregate: codeQuality×0.30 + reliability×0.25 + efficiency×0.20 + communication×0.15 + creativity×0.10
+  taskBreakdown: Record<string, { count: number; avgScore: number }>;  // domain → stats
   recentTrend: "improving" | "stable" | "declining";
   trustLevel: "newcomer" | "established" | "trusted" | "expert";
 }
@@ -607,7 +684,7 @@ Layer 5 — Integration (imports everything)
 | Event Bus | EventEmitter (Node.js) | Simple pub/sub, upgradable to WebSocket |
 | Crypto | @noble/ed25519 | Ed25519 for DID and signing |
 | DID | did:key (multicodec) | Self-describing, no infrastructure needed |
-| Web Dashboard | Vanilla HTML + htmx or Preact | Minimal dependencies |
+| Web Dashboard | Vanilla HTML + CSS + JS + SSE | Zero build step, no framework |
 | CLI Output | chalk + cli-table3 | Formatted terminal output |
 | Build | tsup or tsx | Fast TypeScript execution |
 | Test | vitest | Fast, TypeScript-native |

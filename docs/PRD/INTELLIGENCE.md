@@ -388,25 +388,25 @@ tagOverlap = intersect(matchingCap.tags, requiredCap.tags).length / requiredCap.
 
 The following capability slugs (rkeys) are written to each agent's repository at bootstrap. They are referenced by the task decomposition template to match tasks to agents.
 
-| Agent | Capability rkey | Domain | Required Tags (from task template) |
-|-------|----------------|--------|-------------------------------------|
-| atlas | `react-development` | frontend | `react`, `typescript`, `components` |
-| atlas | `css-design` | frontend | `css`, `responsive-design` |
-| atlas | `accessibility` | frontend | `accessibility` |
-| beacon | `api-design` | backend | `api-design`, `node-js` |
-| beacon | `node-development` | backend | `node-js`, `backend` |
-| beacon | `database-design` | backend | `database-design` |
-| cipher | `authentication` | security | `authentication`, `backend` |
-| cipher | `encryption` | security | `encryption` |
-| cipher | `vulnerability-assessment` | security | `vulnerability-assessment`, `security` |
-| delta | `docker-containerization` | devops | `docker`, `devops` |
-| delta | `ci-cd-pipelines` | devops | `ci-cd` |
-| delta | `monitoring` | devops | `monitoring` |
-| echo | `unit-testing` | testing | `unit-testing`, `testing` |
-| echo | `integration-testing` | testing | `integration-testing` |
-| echo | `e2e-testing` | testing | `e2e-testing` |
-| forge | `react-development` | frontend | `react`, `frontend` |
-| forge | `api-design` | backend | `api-design` |
-| forge | `database-design` | backend | `database-design` |
+| Agent | Capability rkey | Domain | Tags | Proficiency |
+|-------|----------------|--------|------|-------------|
+| atlas | `react-development` | frontend | `react`, `typescript`, `components` | `expert` |
+| atlas | `css-design` | frontend | `css`, `responsive-design` | `advanced` |
+| atlas | `accessibility` | frontend | `accessibility` | `expert` |
+| beacon | `api-design` | backend | `api-design`, `node-js` | `expert` |
+| beacon | `node-development` | backend | `node-js`, `backend` | `expert` |
+| beacon | `database-design` | backend | `database-design` | `advanced` |
+| cipher | `authentication` | security | `authentication`, `backend` | `expert` |
+| cipher | `encryption` | security | `encryption` | `advanced` |
+| cipher | `vulnerability-assessment` | security | `vulnerability-assessment`, `security` | `advanced` |
+| delta | `docker-containerization` | devops | `docker`, `devops` | `expert` |
+| delta | `ci-cd-pipelines` | devops | `ci-cd` | `expert` |
+| delta | `monitoring` | devops | `monitoring` | `advanced` |
+| echo | `unit-testing` | testing | `unit-testing`, `testing` | `expert` |
+| echo | `integration-testing` | testing | `integration-testing` | `expert` |
+| echo | `e2e-testing` | testing | `e2e-testing` | `advanced` |
+| forge | `react-development` | frontend | `react`, `frontend` | `intermediate` |
+| forge | `api-design` | backend | `api-design` | `intermediate` |
+| forge | `database-design` | backend | `database-design` | `beginner` |
 
-**Forge's proficiency levels are lower than specialists** (intermediate/beginner), making the orchestrator rank specialists higher for matching tasks.
+**Forge's explicit proficiency levels:** `react-development` = intermediate, `api-design` = intermediate, `database-design` = beginner. These are lower than specialists (who are `advanced` or `expert`), making the orchestrator rank specialists higher for matching tasks.

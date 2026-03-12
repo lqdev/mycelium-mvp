@@ -94,6 +94,19 @@ mycelium-mvp/
 └── vitest.config.ts
 ```
 
+**npm scripts (in `package.json`):**
+```json
+{
+  "scripts": {
+    "build": "tsx --no-warnings src/demo/run.ts --dry-run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx --no-warnings src/demo/run.ts",
+    "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts"
+  }
+}
+```
+
 **Deliverable:** `npm run build` succeeds, `npm test` runs (empty).
 
 ---
@@ -129,10 +142,10 @@ mycelium-mvp/
 6. `didToKeyFragment(did) = did.split(':')[2]` — returns `"z6Mk..."` for filenames and short display
 
 **Signing Algorithm:**
-1. Canonical serialization: `JSON.stringify(record, Object.keys(record).sort())` — keys sorted alphabetically at all nesting levels
+1. Canonical serialization: `canonicalize(record)` — recursively sorts all object keys at every nesting depth (see `canonicalize()` in [ARCHITECTURE.md](./ARCHITECTURE.md))
 2. Convert to bytes: `new TextEncoder().encode(canonicalJson)`
 3. Sign: `ed25519.sign(bytes, privateKey)` — 64-byte Ed25519 signature
-4. Encode: `base64url(signature)` — URL-safe base64, no padding (RFC 4648 §5)
+4. Encode: `Buffer.from(signature).toString('base64url')` — URL-safe base64, no padding (Node.js built-in, no package needed)
 
 **Verification Algorithm:**
 1. Extract public key from DID: decode base58-btc (strip 'z' prefix), strip 2-byte multicodec prefix → 32-byte public key
@@ -152,16 +165,21 @@ Each provider gets its own repository for storing `intelligence.provider` and `i
 
 **Implementation:**
 ```typescript
-// Core operations:
-// - createRepository(did) → AgentRepository
-// - putRecord(repo, collection, rkey, content) → RecordResult
+// Core operations (see ARCHITECTURE.md §2 for AgentRepository and RecordResult types):
+// - createRepository(identity: AgentIdentity, firehose?: Firehose) → AgentRepository
+// - putRecord(repo, collection, rkey, content) → RecordResult       // upsert: creates OR updates
 // - getRecord(repo, collection, rkey) → Record | null
 // - listRecords(repo, collection) → Record[]
 // - deleteRecord(repo, collection, rkey) → void
 // - exportRepository(repo) → RepositoryExport  (for portability)
-// - importRepository(export) → AgentRepository
+// - importRepository(exportData, identity, firehose?) → AgentRepository
 // - getCommitLog(repo) → Commit[]
 ```
+
+**Integration notes:**
+- `createRepository()` takes the `AgentIdentity` so the repo can sign records internally. Optionally takes a `Firehose` to auto-emit events on write.
+- `putRecord()` is an upsert: checks if `(collection, rkey)` exists → emits `"create"` or `"update"` commit accordingly. Signs the content automatically using `repo.identity`.
+- Auto-creates `./data/` directory on first call if it doesn't exist.
 
 **Storage:** One SQLite file per agent in `./data/{did-fragment}.db`
 
@@ -339,8 +357,12 @@ function validateTransition(current: TaskStatus, next: TaskStatus, taskUri: stri
 
 ```typescript
 // Core operations:
-// - createStamp(attestorRepo, subjectDid, taskUri, dimensions) → ReputationStamp
+// - createStamp(attestorRepo, subjectDid, taskUri, completionUri, taskDomain,
+//               dimensions, intelligenceDid, reworkPenalty?) → ReputationStamp
+//   (See full signature in §5c below)
 // - getStampsForAgent(firehose, subjectDid) → ReputationStamp[]
+//   Scans firehose.log for events where collection="network.mycelium.reputation.stamp"
+//   and record.subjectDid matches. Returns the record content from each matching event.
 // - aggregateReputation(stamps) → AggregatedReputation
 // - getTrustLevel(aggregated) → TrustLevel
 ```
@@ -409,7 +431,7 @@ For each claim on a task:
   capabilityScore /= task.requiredCapabilities.length
 
   // Reputation score (0-100, or 50 for newcomers)
-  reputationScore = rep.totalTasks > 0 ? rep.averageScores.overall : 50
+  reputationScore = rep.totalTasks > 0 ? rep.overallScore : 50
 
   // Load penalty (prefer less busy agents)
   loadPenalty = agent.activeTasks.length * 15   // -15 per active task
@@ -452,6 +474,75 @@ function shouldClaim(agent, task):
 - Trust levels follow threshold rules
 - Task matching respects reputation
 
+**Assessment Score Mapping:**
+
+The `assessment` string on `ReputationStamp` is derived from `overallScore`:
+
+| `overallScore` Range | `assessment` Value |
+|---------------------|--------------------|
+| 90–100 | `"exceptional"` |
+| 80–89 | `"strong"` |
+| 65–79 | `"satisfactory"` |
+| 50–64 | `"needs_improvement"` |
+| 0–49 | `"unsatisfactory"` |
+
+Implement as: `const assessments = [[90,"exceptional"],[80,"strong"],[65,"satisfactory"],[50,"needs_improvement"],[0,"unsatisfactory"]]; return assessments.find(([min]) => score >= min)[1];`
+
+**Trend for agents with fewer than 2 stamps:** If an agent has 0 or 1 stamps, `recentTrend` is always `"stable"` (no data to compute a trend).
+
+**Rework/Rejection Flow (step-by-step):**
+
+When the Mayor rejects a `task.completion`:
+
+```
+1. Mayor sets task.posting.status = "open" (from "completed")
+   → Firehose event: operation "update", collection "task.posting"
+
+2. The original assignee's claim and assignment are preserved.
+   No new claim is needed — the same agent is expected to rework.
+
+3. The agent engine, on receiving the "open" status update event, checks:
+   - Was I the previous assignee for this task? (match by taskUri)
+   - If yes → self-transition to in_progress, begin rework
+
+4. Agent creates a NEW task.completion record (new rkey) referencing
+   the same taskUri. This is the "rework" submission.
+
+5. Mayor reviews the rework submission (same flow as original review).
+
+6. If accepted → reputation.stamp is issued.
+   The stamp's overallScore is penalized: -10 points for requiring rework.
+   (e.g., forge's profile cards score 82 → penalized to 72)
+```
+
+**Multiple claims and state machine interaction:** Multiple agents can submit `task.claim` records for the same task. The status transition `open → claimed` happens on the first claim received. Subsequent claims are accepted as records but do **not** trigger a state change. The orchestrator collects all claims, then assigns the best candidate. Claims exist independently of the task status — they're records in the claimer's repo, not state machine events.
+
+**`agent.state` lifecycle management:**
+- Created: Each agent writes an `agent.state` record (rkey: `"self"`) during bootstrap, with `status: "available"`, `activeTasks: []`, `queuedTasks: []`, `completedToday: 0`.
+- Updated by the **agent engine** (not the Mayor):
+  - On assignment received → add task URI to `activeTasks[]`, set `status: "working"` if not already
+  - On completion submitted → remove task URI from `activeTasks[]`, increment `completedToday`, set `status: "available"` if no active tasks remain
+- `completedToday` is never reset during the demo (single-run session).
+
+**`createStamp` full parameter mapping:**
+```typescript
+function createStamp(
+  attestorRepo: AgentRepository,       // Mayor's repo (stamps live in attestor's repo)
+  subjectDid: string,                  // DID of the agent being rated
+  taskUri: string,                     // AT URI of the task.posting
+  completionUri: string,               // AT URI of the task.completion
+  taskDomain: string,                  // Domain from the task's requiredCapabilities[0].domain
+  dimensions: ReputationDimensions,    // The quality scores
+  intelligenceDid: string,             // From task.completion.intelligenceUsed.modelDid
+  reworkPenalty?: number,              // Points to subtract from overallScore (default: 0)
+): ReputationStamp
+```
+
+The `overallScore`, `assessment`, and `comment` are computed inside `createStamp`:
+- `overallScore = weightedSum(dimensions) - (reworkPenalty ?? 0)`
+- `assessment = scoreToAssessment(overallScore)` (see table above)
+- `comment = generateAssessmentComment(dimensions, assessment)` — template string from highest/lowest dimension
+
 **Deliverable:** Working reputation system with aggregation and trust levels.
 
 ---
@@ -473,20 +564,22 @@ Each agent has:
 
 **Complete Agent Parameters:**
 
-| Agent | Code Quality | Reliability | Communication | Creativity | Efficiency | Speed Mult. | Accept Rate | Fail Rate |
-|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| atlas | 92 ±5 | 90 ±4 | 88 ±6 | 87 ±5 | 86 ±4 | 1.0× | 95% | 3% |
-| beacon | 85 ±4 | 88 ±3 | 82 ±5 | 78 ±6 | 92 ±3 | 0.8× | 90% | 5% |
-| cipher | 90 ±3 | 93 ±2 | 80 ±5 | 75 ±7 | 83 ±4 | 1.2× | 85% | 2% |
-| delta | 84 ±4 | 95 ±2 | 85 ±4 | 72 ±5 | 90 ±3 | 0.9× | 95% | 3% |
-| echo | 88 ±3 | 92 ±3 | 90 ±4 | 80 ±5 | 85 ±4 | 1.0× | 90% | 4% |
-| forge | 72 ±8 | 68 ±10 | 74 ±7 | 70 ±8 | 65 ±9 | 1.3× | 98% | 8% |
+| Agent | Code Quality | Reliability | Communication | Creativity | Efficiency | Speed Mult. | Accept Rate | Fail Rate | maxConcurrentTasks |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| atlas | 92 ±5 | 90 ±4 | 88 ±6 | 87 ±5 | 86 ±4 | 1.0× | 95% | 3% | 2 |
+| beacon | 85 ±4 | 88 ±3 | 82 ±5 | 78 ±6 | 92 ±3 | 0.8× | 90% | 5% | 2 |
+| cipher | 90 ±3 | 93 ±2 | 80 ±5 | 75 ±7 | 83 ±4 | 1.2× | 85% | 2% | 1 |
+| delta | 84 ±4 | 95 ±2 | 85 ±4 | 72 ±5 | 90 ±3 | 0.9× | 95% | 3% | 2 |
+| echo | 88 ±3 | 92 ±3 | 90 ±4 | 80 ±5 | 85 ±4 | 1.0× | 90% | 4% | 2 |
+| forge | 72 ±8 | 68 ±10 | 74 ±7 | 70 ±8 | 65 ±9 | 1.3× | 98% | 8% | 3 |
+| mayor | — | — | — | — | — | — | — | — | — |
 
 **Column definitions:**
 - **Quality dimensions (±variance):** Center score with random uniform variance. E.g., atlas code quality = random(87, 97).
 - **Speed Mult.:** Multiplier on base execution time. Base times: low=2s, medium=5s, high=10s. Atlas at 1.0× does a medium task in 5s; beacon at 0.8× does it in 4s.
 - **Accept Rate:** Probability the agent claims a matching task (even if qualified). Models agent "busyness" or selectivity.
 - **Fail Rate:** Probability the initial submission is rejected by the orchestrator, triggering a rework cycle.
+- **maxConcurrentTasks:** Value written to `agent.profile.maxConcurrentTasks`. Advisory only — see [Bootstrap Sequence](#bootstrap-sequence). Mayor row has no behavioral params (it's an orchestrator, not a worker).
 
 **Mock execution formula:**
 ```
@@ -518,6 +611,41 @@ shouldFail = Math.random() < agent.failRate
 ### 6c. Orchestrator ("Mayor")
 
 **File:** `src/orchestrator/mayor.ts`
+
+**Construction:**
+```typescript
+interface Mayor {
+  identity: AgentIdentity;
+  repo: AgentRepository;
+  firehose: Firehose;
+  template: DecompositionTemplate;
+  agentRegistry: Map<string, AgentRegistryEntry>;  // DID → cached agent data
+  postedTasks: Map<string, { status: string; uri: string }>;  // template task ID → status+URI
+}
+
+interface AgentRegistryEntry {
+  did: string;
+  handle: string;
+  capabilities: AgentCapability[];
+  activeTasks: string[];    // AT URIs of tasks currently assigned to this agent
+  reputation: AggregatedReputation | null;
+}
+
+// - createMayor(identity, repo, firehose, template) → Mayor
+// - mayor.subscribeToFirehose() — registers handlers for agent.profile,
+//     agent.capability, task.claim, task.completion events
+// - mayor.startProject(description) — posts initial tasks
+```
+
+**In-memory agent registry:** Mayor builds its agent registry by observing firehose events during bootstrap:
+1. On `agent.profile` event → add entry to `agentRegistry` (DID, handle, caps=[], activeTasks=[])
+2. On `agent.capability` event → append to matching entry's `capabilities[]`
+3. On `task.claim` event → look up claimer in registry, evaluate, rank, assign
+4. On `task.completion` event → look up completer, review, issue stamp
+5. On assignment → add task URI to agent's `activeTasks[]`
+6. On acceptance → remove task URI from agent's `activeTasks[]`
+
+This means Mayor's firehose subscription must be active **before** agent bootstrap writes profile records (see [Bootstrap Sequence](#bootstrap-sequence)).
 
 ```typescript
 // Mayor behavior:
@@ -581,7 +709,54 @@ Dependency DAG:
 - task-007: `["task-002", "task-003", "task-005", "task-006"]` (needs all app code)
 - task-008: `["task-004", "task-007"]` (needs CI/CD and tests)
 
+**Concrete `requiredCapabilities` for Each Task:**
+
+| Task ID | Title | `requiredCapabilities[].domain` | `requiredCapabilities[].tags` | `minProficiency` |
+|---------|-------|-------------------------------|-------------------------------|-------------------|
+| task-001 | Design component library | `frontend` | `["react", "typescript", "components"]` | `advanced` |
+| task-002 | Build REST API for agent data | `backend` | `["api-design", "node-js"]` | `intermediate` |
+| task-003 | Implement authentication | `security` | `["authentication", "backend"]` | `advanced` |
+| task-004 | Set up CI/CD pipeline | `devops` | `["ci-cd", "docker"]` | `intermediate` |
+| task-005 | Create agent profile cards | `frontend` | `["react", "frontend"]` | `beginner` |
+| task-006 | Build firehose event stream UI | `frontend` | `["react", "websocket", "typescript"]` | `advanced` |
+| task-007 | Write integration tests | `testing` | `["integration-testing", "e2e-testing"]` | `intermediate` |
+| task-008 | Deploy to staging | `devops` | `["deployment", "devops"]` | `beginner` |
+
+**Mock claim/completion data strategy:** Claims and completions are **generated, not hardcoded**. The agent engine generates them from templates:
+- **Claim proposal:** `{ approach: "${agent.handle} will use ${tools}", estimatedDuration: "${computed from SIMULATED_DURATION_MINUTES}", confidenceLevel: "high"|"medium" }`. The `approach` string is assembled from the agent's `tools[]` in their capability record. `confidenceLevel` is `"high"` if the agent has `expert` proficiency, `"medium"` otherwise.
+- **Completion artifacts:** Generated from task title: e.g., task "Design component library" → `["Button.tsx", "Card.tsx", "Input.tsx", "theme.ts", "index.ts"]`. Use a hardcoded map of `taskId → artifactList` in `src/agents/roster.ts`:
+
+```typescript
+const TASK_ARTIFACTS: Record<string, string[]> = {
+  "task-001": ["Button.tsx", "Card.tsx", "Input.tsx", "Modal.tsx", "theme.ts", "index.ts"],
+  "task-002": ["routes.ts", "handlers.ts", "middleware.ts", "openapi.yaml"],
+  "task-003": ["auth.ts", "jwt.ts", "middleware.ts", "auth.test.ts"],
+  "task-004": ["Dockerfile", "docker-compose.yml", ".github/workflows/ci.yml"],
+  "task-005": ["AgentCard.tsx", "AgentCard.test.tsx", "AgentCard.stories.tsx"],
+  "task-006": ["FirehoseStream.tsx", "useFirehose.ts", "EventCard.tsx", "VirtualList.tsx"],
+  "task-007": ["api.test.ts", "auth.test.ts", "lifecycle.test.ts", "reputation.test.ts"],
+  "task-008": ["deploy.sh", "staging.env", "healthcheck.ts"],
+};
+```
+
+- **Completion metrics** (lines, test count, coverage%) are computed from artifact count: `lines = artifacts.length * random(40, 120)`, `testCount = random(8, 25)`, `coveragePercent = random(82, 96)`.
+
 **Mayor posts tasks respecting dependencies:** Only post a task when all its dependencies have status `accepted` or `closed`. Initially posts task-001, task-002, and task-004 (no deps). As tasks complete, posts newly unblocked tasks.
+
+**Dependency-gated posting logic:**
+```typescript
+// Mayor monitors firehose for task status changes (accepted/closed)
+// On each status event:
+function checkAndPostUnblockedTasks(template, postedTasks, firehose):
+  for each task in template.tasks:
+    if task.id in postedTasks: continue      // Already posted
+    allDepsResolved = task.dependsOn.every(depId =>
+      postedTasks[depId]?.status in ["accepted", "closed"]
+    )
+    if allDepsResolved:
+      postTask(mayorRepo, task)              // Post to Wanted Board
+      postedTasks[task.id] = { status: "open", uri: result.uri }
+```
 
 **Tests:**
 - Agents discover and claim tasks they're qualified for
@@ -636,6 +811,14 @@ Dependency DAG:
 | GET | `/api/firehose` | `FirehoseEvent[]` | Full event log |
 | GET | `/api/events` | SSE stream | Real-time firehose events |
 | GET | `/api/reputation` | `AggregatedReputation[]` | All agents' reputation |
+
+**SSE event format:**
+```
+event: firehose
+data: {"seq":1,"type":"commit","operation":"create","did":"did:key:z6Mk...","collection":"network.mycelium.agent.profile","rkey":"self","record":{...},"timestamp":"2026-03-11T00:00:01Z"}
+
+```
+Each SSE message uses `event: firehose` (matching `CONSTANTS.DASHBOARD_SSE_EVENT_NAME`) and `data:` contains the `FirehoseEvent` JSON-serialized on a single line. Messages are separated by a blank line per the SSE spec.
 
 **Dashboard layout (2×2 grid):**
 ```
@@ -752,8 +935,8 @@ Mock data should tell a **compelling story**, not be random noise. The demo narr
 | 2 | Build REST API for agent data | backend, api | medium | beacon |
 | 3 | Implement authentication | backend, security | high | cipher |
 | 4 | Set up CI/CD pipeline | devops, ci-cd | medium | delta |
-| 5 | Create agent profile cards | frontend, react | low | atlas |
-| 6 | Build firehose event stream UI | frontend, websocket | high | forge |
+| 5 | Create agent profile cards | frontend, react | low | forge |
+| 6 | Build firehose event stream UI | frontend, websocket | high | atlas |
 | 7 | Write integration tests | testing, e2e | medium | echo |
 | 8 | Deploy to staging | devops, deployment | low | delta |
 
@@ -941,6 +1124,10 @@ export const CONSTANTS = {
 
   // ─── Firehose ─────────────────────────────────────────────────────────
   FIREHOSE_SEQ_START: 1,   // seq counter starts at 1 (not 0)
+
+  // ─── Dashboard ──────────────────────────────────────────────────────
+  DASHBOARD_PORT: 3000,
+  DASHBOARD_SSE_EVENT_NAME: "firehose",  // SSE event type: `event: firehose\ndata: {...}\n\n`
 
 } as const;
 ```
