@@ -287,7 +287,7 @@ describe('ReputationStampSchema', () => {
       creativity: 8,
       efficiency: 9,
     },
-    overallScore: 8.3,
+    overallScore: 83,   // 0–100 scale (weighted average × 10)
     assessment: 'strong',
     createdAt: NOW,
   };
@@ -296,8 +296,8 @@ describe('ReputationStampSchema', () => {
     expect(() => ReputationStampSchema.parse(valid)).not.toThrow();
   });
 
-  it('rejects overallScore > 10', () => {
-    expect(() => ReputationStampSchema.parse({ ...valid, overallScore: 11 })).toThrow();
+  it('rejects overallScore > 100', () => {
+    expect(() => ReputationStampSchema.parse({ ...valid, overallScore: 101 })).toThrow();
   });
 
   it('rejects overallScore < 0', () => {

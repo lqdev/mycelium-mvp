@@ -259,7 +259,7 @@ export const ReputationStampSchema = z.object({
     creativity: reputationScore,
     efficiency: reputationScore,
   }),
-  overallScore: reputationScore,
+  overallScore: z.number().min(0).max(100), // 0–100 (weighted sum of 0–10 dims × 10)
   assessment: z.enum([
     'exceptional',
     'strong',
