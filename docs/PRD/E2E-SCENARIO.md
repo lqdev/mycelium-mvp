@@ -15,10 +15,13 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
 ### What Happens
 ```
 1. Generate 6 agent identities (Ed25519 keypairs → did:key DIDs)
-2. Create per-agent SQLite repositories
-3. Each agent writes their profile record
-4. Each agent writes their capability records
-5. Firehose broadcasts all record creation events
+2. Generate 3 intelligence provider identities (Anthropic, OpenAI, Local Ollama)
+3. Generate 4 intelligence model identities (Claude Sonnet 4, GPT-4, Llama 3 70B, CodeLlama)
+4. Create per-agent SQLite repositories
+5. Create provider repositories, write intelligence.provider and intelligence.model records
+6. Each agent writes their profile record
+7. Each agent writes their capability records
+8. Firehose broadcasts all record creation events
 ```
 
 ### Console Output
@@ -32,38 +35,53 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
   🤖 atlas    did:key:z6MkhaX...doK  Frontend Specialist
      ├── react-development (expert)
      ├── css-design (advanced)
-     └── accessibility (expert)
+     ├── accessibility (expert)
+     └── 🧠 powered by: claude-sonnet-4 (did:key:z6MkCS4...)
 
   🤖 beacon   did:key:z6MknRB...e4P  Backend Engineer
      ├── api-design (expert)
      ├── node-development (expert)
-     └── database-design (advanced)
+     ├── database-design (advanced)
+     └── 🧠 powered by: claude-sonnet-4 (did:key:z6MkCS4...)
 
   🤖 cipher   did:key:z6Mkp3L...q8R  Security Analyst
      ├── authentication (expert)
      ├── encryption (advanced)
-     └── vulnerability-assessment (advanced)
+     ├── vulnerability-assessment (advanced)
+     └── 🧠 powered by: gpt-4 (did:key:z6MkGP4...)
 
   🤖 delta    did:key:z6MkwYT...m2S  DevOps Engineer
      ├── docker-containerization (expert)
      ├── ci-cd-pipelines (expert)
-     └── monitoring (advanced)
+     ├── monitoring (advanced)
+     └── 🧠 powered by: claude-haiku-4 (did:key:z6MkCH4...)
 
   🤖 echo     did:key:z6MkjFV...n7U  QA/Testing Specialist
      ├── unit-testing (expert)
      ├── integration-testing (expert)
-     └── e2e-testing (advanced)
+     ├── e2e-testing (advanced)
+     └── 🧠 powered by: claude-sonnet-4 (did:key:z6MkCS4...)
 
   🤖 forge    did:key:z6MktHW...k5J  Full-Stack Generalist
      ├── react-development (intermediate)
      ├── api-design (intermediate)
-     └── database-design (beginner)
+     ├── database-design (beginner)
+     └── 🧠 powered by: llama-3-70b (did:key:z6MkLL3...)
+
+  🧠 Intelligence Providers
+  ├── anthropic  did:key:z6MkpTH...dW  Cloud Provider
+  │   ├── claude-sonnet-4   did:key:z6MkCS4...  (code-gen, analysis, reasoning)
+  │   └── claude-haiku-4    did:key:z6MkCH4...  (fast inference, summaries)
+  ├── openai     did:key:z6MknOA...eP  Cloud Provider
+  │   └── gpt-4             did:key:z6MkGP4...  (code-gen, conversation)
+  └── local      did:key:z6MktLO...jK  Local Provider
+      └── llama-3-70b       did:key:z6MkLL3...  (code-gen, local-first)
 
   🤖 mayor    did:key:z6MkqZN...v9X  Orchestrator
      └── (subscribing to firehose...)
 
-✅ 7 agents bootstrapped | 21 capability records | 7 repositories created
-   📡 Firehose: 28 events broadcast
+✅ 7 agents bootstrapped | 3 providers | 4 models | 21 capability records | 10 repositories created
+   📡 Firehose: 35 events broadcast
 ```
 
 ### What This Proves
@@ -71,6 +89,7 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
 - **Layer 1 (Storage):** Each agent owns their data in a separate repository
 - **Layer 2 (Schemas):** Profile and capability records conform to Lexicon schemas
 - **Layer 3 (Federation):** All record creation events appear on the firehose
+- **Intelligence as Primitive:** Providers and models have their own DIDs — they're addressable, not just metadata strings
 
 ---
 
@@ -264,38 +283,47 @@ Task 8: "Deploy to staging"
   ✅ delta   completed "Set up CI/CD pipeline"
      └─ Artifacts: Dockerfile, .github/workflows/ci.yml, docker-compose.yml
      └─ Metrics: 45min | 189 lines | 12/12 tests passing
+     └─ 🧠 Intelligence: claude-haiku-4 (Anthropic)
 
   ✅ atlas   completed "Design component library"
      └─ Artifacts: Button.tsx, Card.tsx, Input.tsx, theme.ts, index.ts
      └─ Metrics: 82min | 534 lines | 28/28 tests | 96% coverage
+     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
 
   ✅ beacon  completed "Build REST API"
      └─ Artifacts: routes/agents.ts, routes/tasks.ts, db/schema.ts, middleware/auth.ts
      └─ Metrics: 71min | 412 lines | 22/22 tests | 91% coverage
+     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
 
   ❌ forge   completed "Create profile cards" → REJECTED BY MAYOR
      └─ Reason: Missing accessibility attributes, no keyboard navigation
+     └─ 🧠 Intelligence: llama-3-70b (Local)
      └─ 🔄 forge reworking...
 
   ✅ cipher  completed "Implement authentication"
      └─ Artifacts: auth/did-verify.ts, auth/jwt.ts, auth/middleware.ts, auth/pkce.ts
      └─ Metrics: 118min | 623 lines | 31/31 tests | 94% coverage
+     └─ 🧠 Intelligence: gpt-4 (OpenAI)
 
   ✅ forge   completed "Create profile cards" (REWORK) → ACCEPTED
      └─ Artifacts: AgentCard.tsx, AgentCard.test.tsx (updated with a11y)
      └─ Metrics: 35min rework | 198 lines | 14/14 tests | 88% coverage
+     └─ 🧠 Intelligence: llama-3-70b (Local)
 
   ✅ atlas   completed "Build firehose event stream UI"
      └─ Artifacts: FirehoseStream.tsx, useFirehose.ts, EventCard.tsx
      └─ Metrics: 105min | 487 lines | 19/19 tests | 92% coverage
+     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
 
   ✅ echo    completed "Write integration tests"
      └─ Artifacts: tests/api.test.ts, tests/auth.test.ts, tests/e2e.spec.ts
      └─ Metrics: 88min | 756 lines | 47/47 tests passing
+     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
 
   ✅ delta   completed "Deploy to staging"
      └─ Artifacts: deploy.sh, docker-compose.staging.yml
      └─ Metrics: 28min | 87 lines | deployment verified
+     └─ 🧠 Intelligence: claude-haiku-4 (Anthropic)
 
 ═══════════════════════════════════════════════════════════
   ✅ PROJECT COMPLETE — 8/8 tasks delivered
@@ -310,6 +338,7 @@ Task 8: "Deploy to staging"
 - **Quality Gates:** Orchestrator can reject work; agents rework
 - **Parallel Execution:** Multiple agents work concurrently
 - **Dependency Management:** Tests run after API/UI; deploy runs after CI/CD
+- **Intelligence Attribution:** Every task completion records which intelligence powered the work
 
 ---
 
@@ -342,6 +371,7 @@ Task 8: "Deploy to staging"
 ═══════════════════════════════════════════════════════════
 
   atlas (Frontend Specialist) — TRUSTED ★★★★☆
+  🧠 Powered by: claude-sonnet-4 (Anthropic)
   ┌─────────────────┬───────┐
   │ Code Quality    │ ██████████████████░░ 92 │
   │ Reliability     │ ██████████████████░░ 93 │
@@ -352,6 +382,7 @@ Task 8: "Deploy to staging"
   Tasks: 2 completed | Domain: frontend | Trend: ↗ improving
 
   forge (Full-Stack Generalist) — NEWCOMER ★★☆☆☆
+  🧠 Powered by: llama-3-70b (Local)
   ┌─────────────────┬───────┐
   │ Code Quality    │ ██████████████░░░░░░ 70 │
   │ Reliability     │ ████████████░░░░░░░░ 62 │  ← rework penalty
@@ -370,6 +401,7 @@ Task 8: "Deploy to staging"
 - **Attestor Ownership:** Stamps live in the Mayor's repo, not the agents'
 - **Consequences:** Poor work (rework) produces lower reputation scores
 - **Trust Levels:** Computed from aggregated stamp history
+- **Trust Chain:** Reputation stamps include the intelligence DID — full accountability chain
 
 ---
 
@@ -394,6 +426,7 @@ Task 8: "Deploy to staging"
      └─ 8 records across 4 collections
      └─ 12 commits in audit log
      └─ Repository hash: sha256-9f3c2a...
+     └─ Intelligence references: claude-sonnet-4 (did:key:z6MkCS4...)
      └─ Export size: 4.2 KB
 
   🆕 Creating new orchestrator context ("orchestrator-beta")...
@@ -414,13 +447,15 @@ Task 8: "Deploy to staging"
      └─ Capabilities: fully portable ✅
      └─ Work history: complete and verifiable ✅
      └─ Reputation: recognized by new orchestrator ✅
+     └─ Intelligence attribution: intact across orchestrators ✅
      └─ No data lost, no re-registration needed ✅
 
 ═══════════════════════════════════════════════════════════
   🍄 DEMO COMPLETE
   
   This demonstration showed:
-  • Self-sovereign agent identity (did:key)
+  • Self-sovereign identity for agents, providers, and models (did:key)
+  • Intelligence as a first-class primitive (providers and models have DIDs)
   • Agent-owned data repositories (SQLite PDS)
   • Typed records with schema validation (Lexicons)
   • Decentralized task coordination (Wanted Board)
@@ -448,12 +483,12 @@ When running `npm run dashboard`, the web UI shows all seven acts simultaneously
 ┌─────────────────────────────────┬─────────────────────────────────┐
 │         AGENT REGISTRY          │          WANTED BOARD           │
 │                                 │                                 │
-│  [atlas] ★★★★☆ frontend       │  ✅ Design component library    │
-│  [beacon] ★★★☆☆ backend       │  ✅ Build REST API              │
-│  [cipher] ★★★☆☆ security      │  ✅ Implement authentication    │
-│  [delta] ★★★☆☆ devops         │  ✅ Set up CI/CD pipeline       │
-│  [echo] ★★★★☆ testing         │  ✅ Create agent profile cards  │
-│  [forge] ★★☆☆☆ fullstack      │  ✅ Build firehose stream UI    │
+│  [atlas] ★★★★☆ frontend 🧠claude    │  ✅ Design component library    │
+│  [beacon] ★★★☆☆ backend 🧠claude   │  ✅ Build REST API              │
+│  [cipher] ★★★☆☆ security 🧠gpt-4   │  ✅ Implement authentication    │
+│  [delta] ★★★☆☆ devops 🧠haiku      │  ✅ Set up CI/CD pipeline       │
+│  [echo] ★★★★☆ testing 🧠claude     │  ✅ Create agent profile cards  │
+│  [forge] ★★☆☆☆ fullstack 🧠llama   │  ✅ Build firehose stream UI    │
 │                                 │  ✅ Write integration tests     │
 │                                 │  ✅ Deploy to staging           │
 ├─────────────────────────────────┼─────────────────────────────────┤

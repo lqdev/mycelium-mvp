@@ -35,6 +35,8 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> **Note:** Intelligence Providers and Models (not shown above) are first-class entities with their own DIDs and repositories. Agents reference intelligence models via DID, and task completions attribute work to the intelligence that powered it. See §2.5.
+
 ---
 
 ## Component Architecture
@@ -68,7 +70,91 @@ interface SignedRecord<T> {
 }
 ```
 
+**Note:** The same `AgentIdentity` structure is used for intelligence providers and models — all entities in Mycelium have DIDs and can sign records. The term "agent" in `AgentIdentity` is generic; providers and models use the same identity mechanism.
+
 **MVP Simplification:** Uses `did:key` (self-describing, no resolution infrastructure needed) instead of `did:plc` (requires PLC directory server). Upgrade path: swap key generation for PLC registration.
+
+#### DID Generation Algorithm
+
+Step-by-step process for generating a `did:key` identifier from an Ed25519 keypair:
+
+```
+Input:  None (generates fresh keypair)
+Output: { did, publicKey, privateKey }
+
+1. Generate Ed25519 keypair:
+   privateKey = crypto.getRandomValues(32 bytes)
+   publicKey  = ed25519.getPublicKey(privateKey)
+
+2. Prepend multicodec prefix for Ed25519-pub (0xed01):
+   multicodecBytes = [0xed, 0x01, ...publicKey]    // 34 bytes total
+
+3. Encode as base58-btc with multibase prefix 'z':
+   encoded = 'z' + base58btc.encode(multicodecBytes)
+
+4. Construct DID:
+   did = 'did:key:' + encoded
+   // Result: "did:key:z6Mk..."
+
+5. didToKeyFragment(did):
+   return did.split(':')[2]   // Returns "z6Mk..." portion
+   // Used for: database filenames, short display
+```
+
+**Library mapping:**
+- Step 1: `@noble/ed25519` → `ed25519.utils.randomPrivateKey()` + `ed25519.getPublicKey()`
+- Step 2: Manual byte concatenation (2-byte prefix + 32-byte key)
+- Step 3: Use `@noble/hashes/utils` or `bs58` package for base58-btc encoding
+- Step 4: String concatenation
+
+#### Signing & Verification Algorithm
+
+All records stored in repositories are cryptographically signed.
+
+**Signing (on write):**
+```
+Input:  identity (AgentIdentity), record (any valid record object)
+Output: { sig, signerDid }
+
+1. Canonical serialization:
+   canonical = JSON.stringify(record, Object.keys(record).sort())
+   // Keys sorted alphabetically for deterministic output
+
+2. Convert to bytes:
+   bytes = new TextEncoder().encode(canonical)
+
+3. Sign with Ed25519:
+   signature = ed25519.sign(bytes, identity.privateKey)
+
+4. Encode signature:
+   sig = base64url(signature)    // URL-safe base64, no padding
+
+5. Return:
+   { sig, signerDid: identity.did }
+```
+
+**Verification (on read / import):**
+```
+Input:  did (string), record (object), sig (string)
+Output: boolean
+
+1. Extract public key from DID:
+   encoded = did.split(':')[2]            // "z6Mk..."
+   multicodecBytes = base58btc.decode(encoded.slice(1))  // Remove 'z' prefix
+   publicKey = multicodecBytes.slice(2)   // Remove 0xed01 prefix → 32-byte key
+
+2. Reconstruct canonical bytes:
+   canonical = JSON.stringify(record, Object.keys(record).sort())
+   bytes = new TextEncoder().encode(canonical)
+
+3. Decode signature:
+   signature = base64url.decode(sig)
+
+4. Verify:
+   return ed25519.verify(signature, bytes, publicKey)
+```
+
+**Canonical JSON rule:** `JSON.stringify(record, Object.keys(record).sort())` — keys sorted alphabetically at every nesting level. This ensures the same record always produces the same bytes regardless of property insertion order.
 
 ---
 
@@ -115,6 +201,94 @@ CREATE INDEX idx_commits_timestamp ON commits(timestamp);
 
 **MVP Simplification:** Uses SHA-256 rolling hash instead of full Merkle Search Tree. The commit log captures the same semantics (tamper detection, audit trail) without the MST complexity.
 
+#### Commit Hash Chain Algorithm
+
+Each write operation appends a commit to the log, forming a tamper-evident chain.
+
+```
+Input:  operation ("create"|"update"|"delete"), recordUri, content, previousCommit
+Output: Commit record
+
+1. Hash the record content:
+   contentHash = SHA-256(JSON.stringify(content, Object.keys(content).sort()))
+   // Same canonical serialization as signing
+
+2. Compute repo root hash (chain link):
+   if previousCommit exists:
+     repoRootHash = SHA-256(previousCommit.repoRootHash + ":" + contentHash)
+   else:
+     repoRootHash = contentHash   // First commit in repo
+
+3. Create commit:
+   commit = {
+     seq: autoincrement,
+     operation,
+     record_uri: recordUri,
+     content_hash: contentHash,
+     repo_root_hash: repoRootHash,
+     timestamp: new Date().toISOString()
+   }
+```
+
+**Verification on import:**
+```
+1. Replay all commits in sequence order
+2. For each commit, verify:
+   a. content_hash matches SHA-256 of the corresponding record
+   b. repo_root_hash matches SHA-256(prev.repo_root_hash + ":" + content_hash)
+3. If any hash doesn't match → import rejected, data tampered
+```
+
+**Export format:**
+```json
+{
+  "did": "did:key:z6Mk...",
+  "exportedAt": "2026-03-11T00:00:00Z",
+  "records": [ { "uri": "at://...", "collection": "...", "content": {}, "sig": "..." } ],
+  "commits": [ { "seq": 1, "operation": "create", "record_uri": "...", "content_hash": "...", "repo_root_hash": "..." } ],
+  "finalRootHash": "sha256-..."
+}
+```
+
+---
+
+### 2.5 Intelligence Module (`src/intelligence/`)
+
+Manages intelligence provider and model identities. Providers and models are first-class entities with their own DIDs, enabling verifiable attribution of AI-powered work.
+
+**Responsibilities:**
+- Generate DIDs for intelligence providers and models
+- Store provider and model records in provider-owned repositories
+- Enable agents to reference intelligences by DID (not hard-coded strings)
+- Support intelligence discovery (find models by capability/domain)
+
+**Key Types:**
+```typescript
+interface IntelligenceProvider {
+  did: string;                          // Provider's DID
+  name: string;                         // e.g., "Anthropic", "OpenAI", "Local Ollama"
+  providerType: "cloud" | "local" | "hybrid";
+  modelsOffered: string[];              // DIDs of intelligence.model records
+}
+
+interface IntelligenceModel {
+  did: string;                          // Model's DID
+  providerDid: string;                  // DID of the provider
+  name: string;                         // e.g., "Claude Sonnet 4"
+  slug: string;                         // e.g., "claude-sonnet-4"
+  capabilities: string[];              // e.g., ["code-generation", "analysis"]
+  domains: string[];                    // e.g., ["frontend", "backend"]
+}
+```
+
+**Design Rationale:**
+- Intelligence gets DIDs because the AT Protocol philosophy is "everything is addressable, everything has identity"
+- This enables: intelligence reputation tracking, trust chain verification (who did the work AND what powered it), agent-intelligence composition (one agent using multiple models)
+- Providers own model records — they attest to their models' capabilities
+- Agents reference models by DID in their profiles and task completions
+
+**MVP Simplification:** Create 2-3 provider identities and 3-4 model identities at bootstrap. Full intelligence discovery and reputation is post-MVP.
+
 ---
 
 ### 3. Schema & Validation Module (`src/schemas/`)
@@ -132,6 +306,10 @@ Defines all Mycelium record types as JSON Schema and validates records before st
 | `network.mycelium.task.claim` | Agent claiming a task | Claiming agent's repo |
 | `network.mycelium.task.completion` | Completed work record | Completing agent's repo |
 | `network.mycelium.reputation.stamp` | Reputation attestation | Attestor's repo |
+| `network.mycelium.intelligence.provider` | Intelligence provider identity | Provider's repo |
+| `network.mycelium.intelligence.model` | AI model capability declaration | Provider's repo |
+
+9 record types define the full Mycelium data model.
 
 Full schema definitions: [SCHEMAS.md](./SCHEMAS.md)
 
@@ -303,6 +481,10 @@ Mock agents with predefined capabilities, behaviors, and simulated task executio
 1. BOOTSTRAP
    ├─ Generate 6 agent identities (did:key + keypair)
    ├─ Create per-agent SQLite repositories
+   ├─ Generate intelligence provider identities (2-3 providers)
+   ├─ Create provider repositories
+   ├─ Write intelligence.provider records
+   ├─ Write intelligence.model records (3-4 models) → Firehose broadcasts
    ├─ Write agent.profile records
    └─ Write agent.capability records → Firehose broadcasts
 
@@ -323,12 +505,14 @@ Mock agents with predefined capabilities, behaviors, and simulated task executio
 
 5. EXECUTION (SIMULATED)
    ├─ Assigned agent "works" on the task (delay + mock output)
-   └─ Agent writes task.completion record → Firehose broadcasts
+   ├─ Agent writes task.completion record → Firehose broadcasts
+   └─ Task completion includes intelligenceUsed attribution
 
 6. REVIEW & REPUTATION
    ├─ Orchestrator receives task.completion event
    ├─ "Reviews" completion (simulated quality assessment)
    ├─ Writes reputation.stamp to own repo → Firehose broadcasts
+   ├─ Reputation stamp includes intelligenceDid for trust chain
    └─ Reputation aggregator updates agent scores
 
 7. PORTABILITY DEMO
@@ -369,6 +553,7 @@ Each MVP component maps to a production AT Protocol component:
 | In-process orchestrator | App View service |
 | Mock agents | Real LLM-powered agents |
 | SQLite reputation | Labeler service + App View aggregation |
+| In-process intelligence registry | Intelligence marketplace / federated model discovery |
 | Local dashboard | Federated web application |
 | — | ActivityPub bridge (Bridgy Fed) |
 | — | Matrix encrypted rooms (Layer 3.5) |

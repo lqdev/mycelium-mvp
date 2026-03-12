@@ -30,6 +30,8 @@ Phase 7: E2E Demo & Dashboard           █████████████�
    - `@noble/ed25519` — Ed25519 crypto for DID and signing
    - `zod` — Schema validation
    - `chalk` — Colored CLI output
+   - `cli-table3` — Formatted CLI tables
+   - `fastify` — Lightweight HTTP server for dashboard
    - `tsx` — Fast TypeScript execution
    - `vitest` — Testing
 3. Configure `tsconfig.json` with strict mode
@@ -39,14 +41,45 @@ Phase 7: E2E Demo & Dashboard           █████████████�
 mycelium-mvp/
 ├── src/
 │   ├── identity/
+│   │   ├── index.ts                # generateIdentity, signRecord, verifySignature, didToKeyFragment
+│   │   └── identity.test.ts
 │   ├── repository/
+│   │   ├── index.ts                # createRepository, putRecord, getRecord, listRecords, etc.
+│   │   └── repository.test.ts
 │   ├── schemas/
+│   │   ├── index.ts                # Schema registry, validation, helper functions
+│   │   ├── types.ts                # All TypeScript interfaces (shared across modules)
+│   │   └── schemas.test.ts
+│   ├── intelligence/
+│   │   ├── index.ts                # createProvider, createModel, listModels, resolveModelDid
+│   │   └── intelligence.test.ts
 │   ├── firehose/
+│   │   ├── index.ts                # createFirehose, subscribe, unsubscribe, getEventLog
+│   │   └── firehose.test.ts
 │   ├── orchestrator/
+│   │   ├── wanted-board.ts         # postTask, claimTask, assignTask, completeTask, reviewCompletion
+│   │   ├── mayor.ts                # Mayor orchestrator: decompose, monitor, assign, review
+│   │   ├── state-machine.ts        # Task state transitions and validation
+│   │   └── orchestrator.test.ts
 │   ├── reputation/
+│   │   ├── index.ts                # createStamp, aggregateReputation, getTrustLevel
+│   │   ├── formulas.ts             # Weighted averages, trend detection, trust thresholds
+│   │   └── reputation.test.ts
 │   ├── agents/
+│   │   ├── roster.ts               # 6 agent definitions with capabilities and behavioral params
+│   │   ├── engine.ts               # Agent decision loop: evaluate, claim, execute, complete
+│   │   └── agents.test.ts
 │   └── demo/
-├── data/                    # SQLite databases (gitignored)
+│       ├── run.ts                  # CLI demo runner (npm run demo)
+│       ├── dashboard/
+│       │   ├── server.ts           # HTTP server (Fastify)
+│       │   ├── public/
+│       │   │   ├── index.html      # Dashboard SPA
+│       │   │   ├── style.css       # Dashboard styles
+│       │   │   └── app.js          # Dashboard logic (vanilla JS + SSE)
+│       │   └── api.ts              # REST API endpoints for dashboard
+│       └── demo.test.ts
+├── data/                           # SQLite databases (gitignored)
 ├── docs/
 │   └── PRD/
 ├── package.json
@@ -80,6 +113,32 @@ mycelium-mvp/
 - DID format: `did:key:z6Mk...` (base58-btc encoded)
 - Private keys stored in-memory only (not persisted in MVP)
 
+**DID Generation Algorithm (step-by-step):**
+1. `privateKey = ed25519.utils.randomPrivateKey()` — 32 random bytes
+2. `publicKey = ed25519.getPublicKey(privateKey)` — 32-byte Ed25519 public key
+3. `multicodecBytes = new Uint8Array([0xed, 0x01, ...publicKey])` — 34 bytes (multicodec prefix for Ed25519-pub)
+4. `encoded = 'z' + base58btc.encode(multicodecBytes)` — multibase base58-btc with 'z' prefix
+5. `did = 'did:key:' + encoded` — final DID string: `"did:key:z6Mk..."`
+6. `didToKeyFragment(did) = did.split(':')[2]` — returns `"z6Mk..."` for filenames and short display
+
+**Signing Algorithm:**
+1. Canonical serialization: `JSON.stringify(record, Object.keys(record).sort())` — keys sorted alphabetically at all nesting levels
+2. Convert to bytes: `new TextEncoder().encode(canonicalJson)`
+3. Sign: `ed25519.sign(bytes, privateKey)` — 64-byte Ed25519 signature
+4. Encode: `base64url(signature)` — URL-safe base64, no padding (RFC 4648 §5)
+
+**Verification Algorithm:**
+1. Extract public key from DID: decode base58-btc (strip 'z' prefix), strip 2-byte multicodec prefix → 32-byte public key
+2. Reconstruct canonical bytes (same as signing step 1-2)
+3. Decode signature from base64url
+4. Verify: `ed25519.verify(signature, bytes, publicKey)` → boolean
+
+**Intelligence Provider & Model Identities:**
+The same `generateIdentity()` function is used to create DIDs for intelligence providers and models. At bootstrap, create:
+- 2-3 provider identities (e.g., "Anthropic", "OpenAI", "Local Ollama")
+- 3-4 model identities (e.g., "Claude Sonnet 4", "GPT-4", "Llama 3")
+Each provider gets its own repository for storing `intelligence.provider` and `intelligence.model` records.
+
 ### 1b. Repository Module
 
 **File:** `src/repository/index.ts`
@@ -99,6 +158,31 @@ mycelium-mvp/
 
 **Storage:** One SQLite file per agent in `./data/{did-fragment}.db`
 
+**Commit Hash Chain Algorithm:**
+- `contentHash = SHA-256(canonicalJson(content))` — same canonical serialization as signing
+- `repoRootHash = SHA-256(previousCommit.repoRootHash + ":" + contentHash)` — chained hash
+- First commit: `repoRootHash = contentHash` (no previous commit)
+- On update: new commit with new contentHash, chained from previous repoRootHash
+- On delete: commit records deletion, content_hash is SHA-256 of empty string, chain continues
+
+**Export Format:**
+```json
+{
+  "did": "did:key:z6Mk...",
+  "exportedAt": "ISO-8601",
+  "records": [{ "uri": "at://...", "collection": "...", "rkey": "...", "content": {}, "sig": "..." }],
+  "commits": [{ "seq": 1, "operation": "create", "record_uri": "...", "content_hash": "...", "repo_root_hash": "..." }],
+  "finalRootHash": "sha256-..."
+}
+```
+
+**Import Verification:**
+1. Replay all commits in seq order
+2. For each: verify `content_hash` matches SHA-256 of corresponding record content
+3. For each: verify `repo_root_hash` = SHA-256(prev.repo_root_hash + ":" + content_hash)
+4. Verify all record signatures using the DID's public key
+5. If any check fails → reject import, report which commit/record failed
+
 **Tests:**
 - Create agent, verify DID format
 - Store and retrieve records
@@ -117,7 +201,7 @@ mycelium-mvp/
 **File:** `src/schemas/index.ts`
 
 **Implementation:**
-- Define Zod schemas for all 7 record types (see [SCHEMAS.md](./SCHEMAS.md))
+- Define Zod schemas for all 9 record types (see [SCHEMAS.md](./SCHEMAS.md))
 - Create a schema registry: `collection NSID → Zod schema`
 - Integrate validation into repository `putRecord()` — reject invalid records
 - Create helper functions for constructing each record type
@@ -126,10 +210,12 @@ mycelium-mvp/
 1. `network.mycelium.agent.profile`
 2. `network.mycelium.agent.capability`
 3. `network.mycelium.agent.state`
-4. `network.mycelium.task.posting`
-5. `network.mycelium.task.claim`
-6. `network.mycelium.task.completion`
-7. `network.mycelium.reputation.stamp`
+4. `network.mycelium.intelligence.provider`
+5. `network.mycelium.intelligence.model`
+6. `network.mycelium.task.posting`
+7. `network.mycelium.task.claim`
+8. `network.mycelium.task.completion`
+9. `network.mycelium.reputation.stamp`
 
 **Tests:**
 - Valid records pass validation
@@ -194,6 +280,38 @@ mycelium-mvp/
 - Status changes update the `task.posting` record via the repository
 - Each transition emits a firehose event
 
+**State Transition Table:**
+
+| Current State | Valid Transitions | Trigger |
+|--------------|-------------------|---------|
+| `open` | `claimed` | First task.claim received |
+| `claimed` | `assigned`, `open` | Orchestrator assigns or all claims withdrawn |
+| `assigned` | `in_progress` | Agent begins execution |
+| `in_progress` | `completed` | Agent creates task.completion |
+| `completed` | `accepted`, `open` | Orchestrator reviews (accept or reject→reopen) |
+| `accepted` | `closed` | Reputation stamp issued, lifecycle ends |
+
+Invalid transitions throw `InvalidStateTransitionError(currentState, attemptedState, taskUri)`.
+
+**Implementation pattern:**
+```typescript
+const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  open: ['claimed'],
+  claimed: ['assigned', 'open'],
+  assigned: ['in_progress'],
+  in_progress: ['completed'],
+  completed: ['accepted', 'open'],
+  accepted: ['closed'],
+  closed: [],
+};
+
+function validateTransition(current: TaskStatus, next: TaskStatus, taskUri: string): void {
+  if (!VALID_TRANSITIONS[current].includes(next)) {
+    throw new InvalidStateTransitionError(current, next, taskUri);
+  }
+}
+```
+
 **Tests:**
 - Full lifecycle test: post → claim → assign → complete → review
 - Multiple agents can claim the same task
@@ -222,17 +340,104 @@ mycelium-mvp/
 
 ### 5b. Aggregation Logic
 
-- Collect all `reputation.stamp` records where `subjectDid` matches
-- Compute weighted averages across dimensions
-- Calculate trust level based on thresholds
-- Track per-domain breakdown (frontend vs. backend reputation)
-- Detect trends (improving/stable/declining)
+**Aggregation Formulas:**
+
+1. **Weighted average per dimension:**
+   ```
+   avgScore[dim] = Σ(stamp[dim] × weight) / Σ(weight)
+   where weight = recencyWeight × domainRelevanceWeight
+   recencyWeight = 1.0 for last 5 stamps, 0.8 for stamps 6-15, 0.5 for stamps 16+
+   domainRelevanceWeight = 1.0 if stamp.taskDomain matches query domain, 0.7 otherwise
+   ```
+
+2. **Overall score:**
+   ```
+   overallScore = (codeQuality × 0.30) + (reliability × 0.25) + (efficiency × 0.20) + (communication × 0.15) + (creativity × 0.10)
+   ```
+
+3. **Trust level thresholds (cumulative):**
+   | Level | Min Tasks | Min Avg Overall Score |
+   |-------|-----------|----------------------|
+   | `newcomer` | 0 | — |
+   | `established` | 3 | 60 |
+   | `trusted` | 10 | 75 |
+   | `expert` | 25 | 85 |
+
+4. **Trend detection (sliding window):**
+   ```
+   window = last 5 stamps (or all if fewer than 5)
+   recentAvg = average overallScore of last ⌈N/2⌉ stamps in window
+   olderAvg = average overallScore of first ⌊N/2⌋ stamps in window
+   delta = recentAvg - olderAvg
+   trend = delta > 5 ? "improving" : delta < -5 ? "declining" : "stable"
+   ```
+
+5. **Per-domain breakdown:**
+   ```
+   For each unique taskDomain across all stamps:
+     domainCount[domain] = count of stamps with that domain
+     domainAvg[domain] = simple average of overallScore for that domain
+   Return as Record<string, { count: number, avgScore: number }>
+   ```
 
 ### 5c. Integration with Wanted Board
 
-- Orchestrator queries agent reputation before assigning tasks
-- Higher-reputation agents preferred for complex/high-priority tasks
-- New agents limited to low-complexity tasks
+**Reputation-Informed Assignment Algorithm:**
+
+When multiple agents claim the same task, the orchestrator ranks them:
+
+```
+For each claim on a task:
+  agent = resolve(claim.claimerDid)
+  rep = aggregateReputation(agent)
+
+  // Capability fit score (0-100)
+  capabilityScore = 0
+  for each requiredCap in task.requiredCapabilities:
+    matchingCap = agent.capabilities.find(c => c.domain === requiredCap.domain)
+    if matchingCap:
+      proficiencyScore = { beginner: 25, intermediate: 50, advanced: 75, expert: 100 }[matchingCap.proficiencyLevel]
+      tagOverlap = intersect(matchingCap.tags, requiredCap.tags).length / requiredCap.tags.length
+      capabilityScore += proficiencyScore * tagOverlap
+  capabilityScore /= task.requiredCapabilities.length
+
+  // Reputation score (0-100, or 50 for newcomers)
+  reputationScore = rep.totalTasks > 0 ? rep.averageScores.overall : 50
+
+  // Load penalty (prefer less busy agents)
+  loadPenalty = agent.activeTasks.length * 15   // -15 per active task
+
+  // Confidence bonus
+  confidenceBonus = { low: 0, medium: 5, high: 10 }[claim.proposal.confidenceLevel]
+
+  // Final ranking score
+  rankScore = (capabilityScore * 0.40) + (reputationScore * 0.35) - loadPenalty + confidenceBonus
+
+  // Complexity gate: newcomers can't take high-complexity tasks
+  if task.complexity === "high" && rep.trustLevel === "newcomer":
+    rankScore = -1   // Disqualified
+
+Sort claims by rankScore descending. Assign to highest.
+```
+
+**Capability Matching (for agent self-evaluation — "should I claim this?"):**
+
+```
+function shouldClaim(agent, task):
+  for each requiredCap in task.requiredCapabilities:
+    hasMatchingDomain = agent.capabilities.some(c => c.domain === requiredCap.domain)
+    if not hasMatchingDomain: return false
+    
+    matchingCap = agent.capabilities.find(c => c.domain === requiredCap.domain)
+    profLevels = ["beginner", "intermediate", "advanced", "expert"]
+    meetsMinProficiency = profLevels.indexOf(matchingCap.proficiencyLevel) >= profLevels.indexOf(requiredCap.minProficiency)
+    if not meetsMinProficiency: return false
+    
+    tagOverlap = intersect(matchingCap.tags, requiredCap.tags).length
+    if tagOverlap === 0: return false   // No relevant tags at all
+
+  return true
+```
 
 **Tests:**
 - Stamps are signed by attestor's key
@@ -258,6 +463,30 @@ Each agent has:
 - Predefined identity (handle, display name)
 - Capability declarations (domains, tools, proficiency)
 - Behavioral parameters (speed, quality tendency, task acceptance rate)
+
+**Complete Agent Parameters:**
+
+| Agent | Code Quality | Reliability | Communication | Creativity | Efficiency | Speed Mult. | Accept Rate | Fail Rate |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| atlas | 92 ±5 | 90 ±4 | 88 ±6 | 87 ±5 | 86 ±4 | 1.0× | 95% | 3% |
+| beacon | 85 ±4 | 88 ±3 | 82 ±5 | 78 ±6 | 92 ±3 | 0.8× | 90% | 5% |
+| cipher | 90 ±3 | 93 ±2 | 80 ±5 | 75 ±7 | 83 ±4 | 1.2× | 85% | 2% |
+| delta | 84 ±4 | 95 ±2 | 85 ±4 | 72 ±5 | 90 ±3 | 0.9× | 95% | 3% |
+| echo | 88 ±3 | 92 ±3 | 90 ±4 | 80 ±5 | 85 ±4 | 1.0× | 90% | 4% |
+| forge | 72 ±8 | 68 ±10 | 74 ±7 | 70 ±8 | 65 ±9 | 1.3× | 98% | 8% |
+
+**Column definitions:**
+- **Quality dimensions (±variance):** Center score with random uniform variance. E.g., atlas code quality = random(87, 97).
+- **Speed Mult.:** Multiplier on base execution time. Base times: low=2s, medium=5s, high=10s. Atlas at 1.0× does a medium task in 5s; beacon at 0.8× does it in 4s.
+- **Accept Rate:** Probability the agent claims a matching task (even if qualified). Models agent "busyness" or selectivity.
+- **Fail Rate:** Probability the initial submission is rejected by the orchestrator, triggering a rework cycle.
+
+**Mock execution formula:**
+```
+executionTime = baseTime[task.complexity] × agent.speedMultiplier × (0.8 + Math.random() * 0.4)
+qualityScore[dim] = clamp(agent.center[dim] + uniformRandom(-variance, +variance), 0, 100)
+shouldFail = Math.random() < agent.failRate
+```
 
 ### 6b. Agent Decision Engine
 
@@ -298,6 +527,54 @@ Each agent has:
 - Predefined decomposition templates for demo scenarios
 - Each subtask has tagged capabilities and complexity
 
+**Decomposition Template Data Structure:**
+
+```typescript
+interface DecompositionTemplate {
+  projectPattern: string;                // Regex or keyword match against project description
+  tasks: Array<{
+    id: string;                          // Unique within template, e.g., "task-001"
+    title: string;
+    description: string;
+    requiredCapabilities: Array<{
+      domain: string;
+      tags: string[];
+      minProficiency: ProficiencyLevel;
+    }>;
+    complexity: "low" | "medium" | "high";
+    priority: "low" | "normal" | "high" | "critical";
+    dependsOn: string[];                 // IDs of tasks that must complete first
+  }>;
+}
+```
+
+**Demo Scenario Template — "Build the Mycelium Dashboard":**
+
+```
+Dependency DAG:
+
+  task-001 (component library)  ──────────────────────────┐
+  task-002 (REST API)  ──────────┐                        │
+  task-003 (authentication) ←────┘ (depends on API)       │
+  task-004 (CI/CD pipeline)  ─────────────────────────────┤
+  task-005 (profile cards) ←──────────────────────────────┘ (depends on components)
+  task-006 (firehose UI) ←── task-001 (depends on components)
+  task-007 (integration tests) ←── task-002, task-003, task-005, task-006
+  task-008 (deploy to staging) ←── task-004, task-007
+```
+
+**Concrete dependency array per task:**
+- task-001: `[]` (no dependencies)
+- task-002: `[]` (no dependencies)
+- task-003: `["task-002"]` (needs API first)
+- task-004: `[]` (no dependencies)
+- task-005: `["task-001"]` (needs component library)
+- task-006: `["task-001"]` (needs component library)
+- task-007: `["task-002", "task-003", "task-005", "task-006"]` (needs all app code)
+- task-008: `["task-004", "task-007"]` (needs CI/CD and tests)
+
+**Mayor posts tasks respecting dependencies:** Only post a task when all its dependencies have status `accepted` or `closed`. Initially posts task-001, task-002, and task-004 (no deps). As tasks complete, posts newly unblocked tasks.
+
 **Tests:**
 - Agents discover and claim tasks they're qualified for
 - Agents ignore tasks they can't do
@@ -328,16 +605,48 @@ Each agent has:
 
 **File:** `src/demo/dashboard/`
 
-**Implementation:**
-- Simple HTTP server (built-in Node.js or `fastify`)
-- Static HTML + minimal JS (htmx or vanilla)
-- Four panels:
-  1. **Agent Registry** — Cards for each agent with DID, capabilities, status
-  2. **Wanted Board** — Task cards with real-time status updates
-  3. **Firehose Stream** — Live event log with filters
-  4. **Reputation Board** — Agent "character sheets" with radar charts
+**Technology decision:** Vanilla HTML + CSS + JavaScript with Server-Sent Events (SSE). No framework. Rationale: Zero build step, instant reload, minimal complexity for a demo dashboard.
 
-**Run command:** `npm run dashboard`
+**Server:** Fastify (lightweight, TypeScript-native HTTP server)
+
+**Data flow:**
+1. Dashboard server starts, connects to the same Firehose instance as the demo
+2. REST API serves current state (agents, tasks, reputation)
+3. SSE endpoint (`/api/events`) streams firehose events to the browser in real-time
+4. Browser updates panels on each SSE event (no polling)
+
+**API Endpoints:**
+
+| Method | Path | Response | Description |
+|--------|------|----------|-------------|
+| GET | `/` | HTML | Dashboard SPA |
+| GET | `/api/agents` | `AgentProfile[]` | All agent profiles with capabilities |
+| GET | `/api/agents/:did` | `AgentProfile` | Single agent profile |
+| GET | `/api/agents/:did/reputation` | `AggregatedReputation` | Agent's character sheet |
+| GET | `/api/tasks` | `TaskPosting[]` | All tasks with current status |
+| GET | `/api/tasks/:rkey` | `TaskPosting` | Single task with claims |
+| GET | `/api/firehose` | `FirehoseEvent[]` | Full event log |
+| GET | `/api/events` | SSE stream | Real-time firehose events |
+| GET | `/api/reputation` | `AggregatedReputation[]` | All agents' reputation |
+
+**Dashboard layout (2×2 grid):**
+```
+┌──────────────────────┬──────────────────────┐
+│   AGENT REGISTRY     │    WANTED BOARD       │
+│   Cards per agent    │    Task cards with     │
+│   DID, caps, status  │    status badges       │
+├──────────────────────┼──────────────────────┤
+│   FIREHOSE STREAM    │   REPUTATION BOARD    │
+│   Scrolling event    │    Bar charts per      │
+│   log with filters   │    agent dimension     │
+└──────────────────────┴──────────────────────┘
+```
+
+**Styling:** CSS Grid layout, CSS custom properties for theming. Color palette:
+- Open tasks: blue, Assigned: yellow, Completed: green, Rejected: red
+- Trust levels: newcomer=gray, established=blue, trusted=green, expert=gold
+
+**Run command:** `npm run dashboard` starts on `http://localhost:3000`
 
 ### 7c. Portability Demonstration
 
@@ -349,6 +658,73 @@ At the end of the demo:
 5. Agent can claim tasks in the new context using existing reputation
 
 **Deliverable:** Complete, runnable E2E demonstration with visual output.
+
+---
+
+## Error Handling Conventions
+
+All modules use custom error classes extending a base `MyceliumError`. Errors are thrown (not returned as Result types) — the MVP favors simplicity.
+
+**Error Class Hierarchy:**
+```typescript
+class MyceliumError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+    this.name = 'MyceliumError';
+  }
+}
+
+// Identity errors
+class InvalidDIDError extends MyceliumError { /* code: "INVALID_DID" */ }
+class SignatureVerificationError extends MyceliumError { /* code: "SIG_VERIFY_FAILED" */ }
+
+// Repository errors
+class RecordNotFoundError extends MyceliumError { /* code: "RECORD_NOT_FOUND" */ }
+class SchemaValidationError extends MyceliumError { /* code: "SCHEMA_VALIDATION" — includes Zod error details */ }
+class ImportVerificationError extends MyceliumError { /* code: "IMPORT_VERIFY_FAILED" — includes which commit/record failed */ }
+
+// Task lifecycle errors
+class InvalidStateTransitionError extends MyceliumError { /* code: "INVALID_TRANSITION" — includes from/to/taskUri */ }
+class TaskNotFoundError extends MyceliumError { /* code: "TASK_NOT_FOUND" */ }
+class UnauthorizedError extends MyceliumError { /* code: "UNAUTHORIZED" — agent doesn't own this record */ }
+
+// Firehose errors
+class SubscriptionNotFoundError extends MyceliumError { /* code: "SUB_NOT_FOUND" */ }
+```
+
+**Conventions:**
+- All public functions document which errors they can throw (JSDoc `@throws`)
+- Schema validation errors include the full Zod error with path information
+- Repository operations wrap SQLite errors in `MyceliumError` subclasses
+- The demo runner catches all errors and formats them with `chalk.red()` for display
+- Tests verify both happy paths AND error cases
+
+---
+
+## Conventions & Standards
+
+**Identifiers:**
+- **rkey generation:** `crypto.randomUUID()` (v4 UUID) for all generated record keys
+- **Timestamps:** `new Date().toISOString()` — always UTC, always ISO 8601 with milliseconds
+- **AT URIs:** `at://${did}/${collection}/${rkey}` — constructed by template literal
+
+**SQLite:**
+- One connection per repository, opened on `createRepository()`, closed on process exit
+- WAL mode enabled: `PRAGMA journal_mode=WAL;` for concurrent reads
+- Foreign keys enabled: `PRAGMA foreign_keys=ON;`
+
+**Testing:**
+- Test files co-located with source: `src/identity/identity.test.ts`
+- Use `vitest` with `describe`/`it`/`expect` pattern
+- Each phase's tests must pass before starting the next phase
+- Use `beforeEach` to create fresh temp directories for SQLite databases in tests
+
+**Code style:**
+- No classes — use factory functions and plain objects (functional style)
+- Export named functions, not default exports
+- Use `type` imports for type-only imports: `import type { AgentIdentity } from '../schemas/types'`
 
 ---
 
@@ -426,3 +802,6 @@ The MVP is complete when:
 - [ ] At least one task experiences rejection and rework
 - [ ] `npm test` passes with all core modules covered
 - [ ] Console output clearly narrates each step of the lifecycle
+- [ ] Intelligence providers and models have DIDs and are stored as first-class records
+- [ ] Agent profiles reference intelligence by DID (not hard-coded strings)
+- [ ] Task completions include intelligence attribution

@@ -39,17 +39,18 @@ The MVP proves the **concept works** and the **pieces connect**. It is not produ
 ### What "E2E" Means Here
 
 ```
-Agent Creation → Capability Declaration → Task Posting → Discovery →
+Agent Creation → Intelligence Setup → Capability Declaration → Task Posting → Discovery →
 Capability Matching → Task Claiming → Execution (simulated) →
-Completion Recording → Reputation Stamping → Portability Demo
+Completion Recording (with intelligence attribution) → Reputation Stamping → Portability Demo
 ```
 
 A user should be able to run the MVP and see:
 1. Multiple agents bootstrapping with unique identities
 2. Agents declaring what they can do
+2.5. Intelligence providers and models registered with their own DIDs
 3. Tasks appearing on a "Wanted Board"
 4. Agents discovering and claiming tasks through an event stream
-5. Completed work recorded with verifiable outputs
+5. Completed work recorded with verifiable outputs and intelligence attribution
 6. Reputation stamps issued and aggregated
 7. An agent "migrating" to a new orchestrator with reputation intact
 
@@ -61,9 +62,9 @@ A user should be able to run the MVP and see:
 
 | Layer | Component | MVP Implementation |
 |-------|-----------|-------------------|
-| **L0: Identity** | Agent DIDs | Simplified `did:key` generation with Ed25519 keypairs |
+| **L0: Identity** | Agent & Intelligence DIDs | Simplified `did:key` generation for agents, providers, and models |
 | **L1: Storage** | Agent Repositories | SQLite-backed record stores (one per agent) |
-| **L2: Schemas** | Lexicon Records | JSON Schema definitions for all record types |
+| **L2: Schemas** | Lexicon Records | JSON Schema definitions for all 9 record types (agent, intelligence, task, reputation) |
 | **L3: Federation** | Event Stream | In-process pub/sub "firehose" broadcasting record changes |
 | **L3: Federation** | Wanted Board | Task posting/claiming/completion state machine |
 | **L4: Application** | Orchestrator | A "Mayor" that decomposes tasks and assigns work |
@@ -102,6 +103,7 @@ A user should be able to run the MVP and see:
 6. **Reputation**: Reputation stamps are signed, stored in the attestor's repo, and aggregatable
 7. **Portability**: An agent can be "migrated" with all its data and reputation intact
 8. **Observability**: A dashboard or CLI output visualizes the full flow
+9. **Intelligence**: AI models and providers are first-class entities with DIDs, referenced by agents and attributed in completions
 
 ---
 
@@ -155,6 +157,15 @@ The mock data isn't random — it creates a **narrative** demonstrating real coo
 - Believable capability matching and reputation growth
 - A migration event showing portability
 
+### 5. Intelligence as a Core Primitive
+AI models and providers are not metadata fields — they're first-class entities with DIDs, repositories, and signed records. This enables:
+- Verifiable attribution (which intelligence powered which work)
+- Intelligence reputation (model performance tracked over time)
+- Agent-intelligence composition (one agent, multiple models)
+- Trust chain completeness (agent + intelligence + provider = full accountability)
+
+In the MVP, intelligence providers and models are created at bootstrap with predefined capabilities. Full intelligence discovery and marketplace is post-MVP.
+
 ---
 
 ## Relationship to Research
@@ -173,3 +184,4 @@ This MVP implements the **architectural vision** from the Mycelium research, spe
 | Lexicon Schemas | JSON Schema record type definitions |
 | Firehose Event Stream | In-process pub/sub with same semantics |
 | DID-based Portable Identity | did:key with Ed25519 keypairs |
+| Intelligence as First-Class Entity | Intelligence providers and models with DIDs, referenced by agents |
