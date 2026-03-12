@@ -518,10 +518,10 @@ When the Mayor rejects a `task.completion`:
 **Multiple claims and state machine interaction:** Multiple agents can submit `task.claim` records for the same task. The status transition `open → claimed` happens on the first claim received. Subsequent claims are accepted as records but do **not** trigger a state change. The orchestrator collects all claims, then assigns the best candidate. Claims exist independently of the task status — they're records in the claimer's repo, not state machine events.
 
 **`agent.state` lifecycle management:**
-- Created: Each agent writes an `agent.state` record (rkey: `"self"`) during bootstrap, with `status: "available"`, `activeTasks: []`, `queuedTasks: []`, `completedToday: 0`.
+- Created: Each agent writes an `agent.state` record (rkey: `"self"`) during bootstrap, with `status: "idle"`, `activeTasks: []`, `queuedTasks: []`, `completedToday: 0`.
 - Updated by the **agent engine** (not the Mayor):
   - On assignment received → add task URI to `activeTasks[]`, set `status: "working"` if not already
-  - On completion submitted → remove task URI from `activeTasks[]`, increment `completedToday`, set `status: "available"` if no active tasks remain
+  - On completion submitted → remove task URI from `activeTasks[]`, increment `completedToday`, set `status: "idle"` if no active tasks remain
 - `completedToday` is never reset during the demo (single-run session).
 
 **`createStamp` full parameter mapping:**
@@ -970,8 +970,8 @@ const executionTime = `PT${Math.round(simulatedMinutes)}M`;  // ISO 8601 duratio
 | Build REST API | medium | beacon | `"PT40M"` |
 | Implement authentication | high | cipher | `"PT96M"` |
 | Set up CI/CD pipeline | medium | delta | `"PT45M"` |
-| Create agent profile cards | low | atlas | `"PT24M"` |
-| Build firehose event stream UI | high | forge | `"PT125M"` |
+| Create agent profile cards | low | forge | `"PT39M"` |
+| Build firehose event stream UI | high | atlas | `"PT100M"` |
 | Write integration tests | medium | echo | `"PT50M"` |
 | Deploy to staging | low | delta | `"PT18M"` |
 
@@ -1002,35 +1002,35 @@ Step 1: Create Firehose
   firehose = createFirehose()
   // Must be first — all subsequent writes emit events.
 
-Step 2: Register Mayor's firehose subscription
-  mayor = createMayor(firehose, ...)
-  mayor.subscribeToFirehose(firehose)
+Step 2: Generate Mayor identity + repository
+  mayorIdentity = generateIdentity("mayor.mycelium.local", "Mayor (Orchestrator)")
+  mayorRepo = createRepository(mayorIdentity, firehose)
+
+Step 3: Create Mayor and register firehose subscription
+  mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE)
+  // Mayor.subscribeToFirehose() is called inside createMayor()
   // Must happen BEFORE any records are written.
   // If Mayor subscribes after agents are bootstrapped,
   // it misses the agent.profile events and can't build its registry.
 
-Step 3: Register dashboard subscription (dashboard mode only)
+Step 4: Register dashboard subscription (dashboard mode only)
   if (mode === 'dashboard') {
     dashboardServer.subscribeToFirehose(firehose)
   }
 
-Step 4: Bootstrap intelligence providers
-  { githubModels, ollama } = await bootstrapIntelligence(firehose)
-  // Generates 2 provider identities + repos
+Step 5: Bootstrap intelligence providers + models
+  result = bootstrapIntelligence(firehose)
+  // Generates 2 provider identities + repos (passing firehose to createRepository)
   // Writes intelligence.provider records → 2 Firehose events
-
-Step 5: Bootstrap intelligence models
   // Generates 6 model identities
   // Writes intelligence.model records into provider repos → 6 Firehose events
   // Updates provider records with modelsOffered[] DIDs → 2 more Firehose events
 
-Step 6: Generate agent identities (6 workers + 1 Mayor)
+Step 6: Generate agent identities (6 workers)
   agents = AGENT_ROSTER.map(def => generateIdentity(def.handle, def.displayName))
-  mayorIdentity = generateIdentity("mayor.mycelium.local", "Mayor (Orchestrator)")
 
 Step 7: Create agent repositories
-  agentRepos = agents.map(a => createRepository(a.did))
-  mayorRepo = createRepository(mayorIdentity.did)
+  agentRepos = agents.map(a => createRepository(a, firehose))
 
 Step 8: Write agent.profile records (each in own repo)
   // → 7 Firehose events (6 workers + Mayor)
