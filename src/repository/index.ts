@@ -17,6 +17,8 @@ import type {
 } from '../schemas/types.js';
 import { canonicalize, didToKeyFragment, signContent, verifySignature } from '../identity/index.js';
 import { ImportVerificationError, RecordNotFoundError } from '../errors.js';
+import { publish } from '../firehose/index.js';
+import { validateRecord } from '../schemas/index.js';
 
 const DATA_DIR = './data';
 
@@ -53,17 +55,7 @@ function emitFirehoseEvent(
     timestamp: new Date().toISOString(),
   };
 
-  firehose.log.push(event);
-
-  for (const sub of firehose.subscriptions.values()) {
-    const { filter } = sub;
-    if (filter) {
-      if (filter.collections && !filter.collections.includes(collection)) continue;
-      if (filter.dids && !filter.dids.includes(repo.did)) continue;
-    }
-    // Fire-and-forget; handlers may be async
-    void Promise.resolve(sub.handler(event));
-  }
+  publish(firehose, event);
 }
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -161,6 +153,9 @@ export function putRecord(
 ): RecordResult {
   const uri = `at://${repo.did}/${collection}/${rkey}`;
   const now = new Date().toISOString();
+
+  // Validate against Zod schema (throws SchemaValidationError on failure)
+  validateRecord(collection, content);
 
   // Sign the content
   const { sig } = signContent(repo.identity, content);

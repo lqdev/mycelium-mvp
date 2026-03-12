@@ -24,11 +24,10 @@ function makeRepo(identity?: AgentIdentity, withFirehose = false) {
 describe('putRecord() — create', () => {
   it('returns a RecordResult with uri, cid, and commit', () => {
     const { repo, identity } = makeRepo();
-    const result = putRecord(repo, 'network.mycelium.agent.profile', 'self', {
-      $type: 'network.mycelium.agent.profile',
+    const result = putRecord(repo, 'net.test.profile', 'self', {
       did: identity.did,
     });
-    expect(result.uri).toBe(`at://${identity.did}/network.mycelium.agent.profile/self`);
+    expect(result.uri).toBe(`at://${identity.did}/net.test.profile/self`);
     expect(result.cid).toMatch(/^[0-9a-f]{64}$/); // SHA-256 hex
     expect(result.commit.operation).toBe('create');
     expect(result.commit.seq).toBeGreaterThan(0);

@@ -2,7 +2,7 @@
 // Simulates the AT Protocol Firehose — every record write is an event.
 
 import { randomUUID } from 'node:crypto';
-import type { Firehose, FirehoseFilter, FirehoseSubscription } from '../schemas/types.js';
+import type { Firehose, FirehoseEvent, FirehoseFilter, FirehoseSubscription } from '../schemas/types.js';
 import { SubscriptionNotFoundError } from '../errors.js';
 import { CONSTANTS } from '../constants.js';
 
@@ -47,6 +47,24 @@ export function unsubscribe(firehose: Firehose, subscriptionId: string): void {
     throw new SubscriptionNotFoundError(subscriptionId);
   }
   firehose.subscriptions.delete(subscriptionId);
+}
+
+/**
+ * Publish an event to all matching subscribers.
+ * Filter semantics: if both collections AND dids are provided, both must match (AND).
+ * Also appends the event to the log for dashboard replay.
+ */
+export function publish(firehose: Firehose, event: FirehoseEvent): void {
+  firehose.log.push(event);
+
+  for (const sub of firehose.subscriptions.values()) {
+    const { filter } = sub;
+    if (filter) {
+      if (filter.collections && !filter.collections.includes(event.collection)) continue;
+      if (filter.dids && !filter.dids.includes(event.did)) continue;
+    }
+    void Promise.resolve(sub.handler(event));
+  }
 }
 
 /**
