@@ -1,0 +1,30 @@
+{
+  "name": "mycelium-mvp",
+  "version": "0.1.0",
+  "description": "Federated AI agent orchestration system simulating the AT Protocol",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsx --no-warnings src/demo/run.ts --dry-run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx --no-warnings src/demo/run.ts",
+    "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.0.0",
+    "@noble/hashes": "^1.3.3",
+    "bs58": "^6.0.0",
+    "zod": "^3.23.8",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.5",
+    "fastify": "^4.26.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.1",
+    "vitest": "^1.3.1",
+    "@types/node": "^22.0.0"
+  }
+}
