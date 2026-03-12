@@ -15,8 +15,8 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
 ### What Happens
 ```
 1. Generate 6 agent identities (Ed25519 keypairs → did:key DIDs)
-2. Generate 3 intelligence provider identities (Anthropic, OpenAI, Local Ollama)
-3. Generate 4 intelligence model identities (Claude Sonnet 4, GPT-4, Llama 3 70B, CodeLlama)
+2. Generate 2 intelligence provider identities (GitHub Models for cloud, Local Ollama for local)
+3. Generate 6 intelligence model identities (cloud: Claude Sonnet 4, Claude Haiku 4, GPT-4, Phi-4; local: Llama 3 70B, CodeLlama)
 4. Create per-agent SQLite repositories
 5. Create provider repositories, write intelligence.provider and intelligence.model records
 6. Each agent writes their profile record
@@ -69,18 +69,19 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
      └── 🧠 powered by: llama-3-70b (did:key:z6MkLL3...)
 
   🧠 Intelligence Providers
-  ├── anthropic  did:key:z6MkpTH...dW  Cloud Provider
+  ├── github-models  did:key:z6MkGH...dW  Cloud Provider (Unified Gateway)
   │   ├── claude-sonnet-4   did:key:z6MkCS4...  (code-gen, analysis, reasoning)
-  │   └── claude-haiku-4    did:key:z6MkCH4...  (fast inference, summaries)
-  ├── openai     did:key:z6MknOA...eP  Cloud Provider
-  │   └── gpt-4             did:key:z6MkGP4...  (code-gen, conversation)
-  └── local      did:key:z6MktLO...jK  Local Provider
-      └── llama-3-70b       did:key:z6MkLL3...  (code-gen, local-first)
+  │   ├── claude-haiku-4    did:key:z6MkCH4...  (fast inference, summaries)
+  │   ├── gpt-4             did:key:z6MkGP4...  (code-gen, conversation)
+  │   └── phi-4             did:key:z6MkPH4...  (reasoning, general purpose)
+  └── ollama        did:key:z6MktLO...jK  Local Provider (Self-Hosted)
+      ├── llama-3-70b       did:key:z6MkLL3...  (code-gen, local-first)
+      └── codellama         did:key:z6MkCL2...  (code-specific, local-first)
 
   🤖 mayor    did:key:z6MkqZN...v9X  Orchestrator
      └── (subscribing to firehose...)
 
-✅ 7 agents bootstrapped | 3 providers | 4 models | 21 capability records | 10 repositories created
+✅ 7 agents bootstrapped | 2 providers | 6 models | 21 capability records | 9 repositories created
    📡 Firehose: 35 events broadcast
 ```
 
@@ -283,47 +284,47 @@ Task 8: "Deploy to staging"
   ✅ delta   completed "Set up CI/CD pipeline"
      └─ Artifacts: Dockerfile, .github/workflows/ci.yml, docker-compose.yml
      └─ Metrics: 45min | 189 lines | 12/12 tests passing
-     └─ 🧠 Intelligence: claude-haiku-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-haiku-4 (GitHub Models)
 
   ✅ atlas   completed "Design component library"
      └─ Artifacts: Button.tsx, Card.tsx, Input.tsx, theme.ts, index.ts
      └─ Metrics: 82min | 534 lines | 28/28 tests | 96% coverage
-     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-sonnet-4 (GitHub Models)
 
   ✅ beacon  completed "Build REST API"
      └─ Artifacts: routes/agents.ts, routes/tasks.ts, db/schema.ts, middleware/auth.ts
      └─ Metrics: 71min | 412 lines | 22/22 tests | 91% coverage
-     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-sonnet-4 (GitHub Models)
 
   ❌ forge   completed "Create profile cards" → REJECTED BY MAYOR
      └─ Reason: Missing accessibility attributes, no keyboard navigation
-     └─ 🧠 Intelligence: llama-3-70b (Local)
+     └─ 🧠 Intelligence: llama-3-70b (Ollama)
      └─ 🔄 forge reworking...
 
   ✅ cipher  completed "Implement authentication"
      └─ Artifacts: auth/did-verify.ts, auth/jwt.ts, auth/middleware.ts, auth/pkce.ts
      └─ Metrics: 118min | 623 lines | 31/31 tests | 94% coverage
-     └─ 🧠 Intelligence: gpt-4 (OpenAI)
+     └─ 🧠 Intelligence: gpt-4 (GitHub Models)
 
   ✅ forge   completed "Create profile cards" (REWORK) → ACCEPTED
      └─ Artifacts: AgentCard.tsx, AgentCard.test.tsx (updated with a11y)
      └─ Metrics: 35min rework | 198 lines | 14/14 tests | 88% coverage
-     └─ 🧠 Intelligence: llama-3-70b (Local)
+     └─ 🧠 Intelligence: llama-3-70b (Ollama)
 
   ✅ atlas   completed "Build firehose event stream UI"
      └─ Artifacts: FirehoseStream.tsx, useFirehose.ts, EventCard.tsx
      └─ Metrics: 105min | 487 lines | 19/19 tests | 92% coverage
-     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-sonnet-4 (GitHub Models)
 
   ✅ echo    completed "Write integration tests"
      └─ Artifacts: tests/api.test.ts, tests/auth.test.ts, tests/e2e.spec.ts
      └─ Metrics: 88min | 756 lines | 47/47 tests passing
-     └─ 🧠 Intelligence: claude-sonnet-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-sonnet-4 (GitHub Models)
 
   ✅ delta   completed "Deploy to staging"
      └─ Artifacts: deploy.sh, docker-compose.staging.yml
      └─ Metrics: 28min | 87 lines | deployment verified
-     └─ 🧠 Intelligence: claude-haiku-4 (Anthropic)
+     └─ 🧠 Intelligence: claude-haiku-4 (GitHub Models)
 
 ═══════════════════════════════════════════════════════════
   ✅ PROJECT COMPLETE — 8/8 tasks delivered
@@ -371,7 +372,7 @@ Task 8: "Deploy to staging"
 ═══════════════════════════════════════════════════════════
 
   atlas (Frontend Specialist) — TRUSTED ★★★★☆
-  🧠 Powered by: claude-sonnet-4 (Anthropic)
+  🧠 Powered by: claude-sonnet-4 (GitHub Models)
   ┌─────────────────┬───────┐
   │ Code Quality    │ ██████████████████░░ 92 │
   │ Reliability     │ ██████████████████░░ 93 │
@@ -382,7 +383,7 @@ Task 8: "Deploy to staging"
   Tasks: 2 completed | Domain: frontend | Trend: ↗ improving
 
   forge (Full-Stack Generalist) — NEWCOMER ★★☆☆☆
-  🧠 Powered by: llama-3-70b (Local)
+  🧠 Powered by: llama-3-70b (Ollama)
   ┌─────────────────┬───────┐
   │ Code Quality    │ ██████████████░░░░░░ 70 │
   │ Reliability     │ ████████████░░░░░░░░ 62 │  ← rework penalty
@@ -483,12 +484,12 @@ When running `npm run dashboard`, the web UI shows all seven acts simultaneously
 ┌─────────────────────────────────┬─────────────────────────────────┐
 │         AGENT REGISTRY          │          WANTED BOARD           │
 │                                 │                                 │
-│  [atlas] ★★★★☆ frontend 🧠claude    │  ✅ Design component library    │
-│  [beacon] ★★★☆☆ backend 🧠claude   │  ✅ Build REST API              │
-│  [cipher] ★★★☆☆ security 🧠gpt-4   │  ✅ Implement authentication    │
-│  [delta] ★★★☆☆ devops 🧠haiku      │  ✅ Set up CI/CD pipeline       │
-│  [echo] ★★★★☆ testing 🧠claude     │  ✅ Create agent profile cards  │
-│  [forge] ★★☆☆☆ fullstack 🧠llama   │  ✅ Build firehose stream UI    │
+│  [atlas] ★★★★☆ frontend 🧠gh:claude  │  ✅ Design component library    │
+│  [beacon] ★★★☆☆ backend 🧠gh:claude  │  ✅ Build REST API              │
+│  [cipher] ★★★☆☆ security 🧠gh:gpt-4  │  ✅ Implement authentication    │
+│  [delta] ★★★☆☆ devops 🧠gh:haiku     │  ✅ Set up CI/CD pipeline       │
+│  [echo] ★★★★☆ testing 🧠gh:claude    │  ✅ Create agent profile cards  │
+│  [forge] ★★☆☆☆ fullstack 🧠ol:llama  │  ✅ Build firehose stream UI    │
 │                                 │  ✅ Write integration tests     │
 │                                 │  ✅ Deploy to staging           │
 ├─────────────────────────────────┼─────────────────────────────────┤

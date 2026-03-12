@@ -135,8 +135,8 @@ mycelium-mvp/
 
 **Intelligence Provider & Model Identities:**
 The same `generateIdentity()` function is used to create DIDs for intelligence providers and models. At bootstrap, create:
-- 2-3 provider identities (e.g., "Anthropic", "OpenAI", "Local Ollama")
-- 3-4 model identities (e.g., "Claude Sonnet 4", "GPT-4", "Llama 3")
+- 2 provider identities (GitHub Models for cloud, Local Ollama for local)
+- 6 model identities (cloud: "Claude Sonnet 4", "Claude Haiku 4", "GPT-4", "Phi-4"; local: "Llama 3 70B", "CodeLlama")
 Each provider gets its own repository for storing `intelligence.provider` and `intelligence.model` records.
 
 ### 1b. Repository Module

@@ -266,8 +266,9 @@ Manages intelligence provider and model identities. Providers and models are fir
 ```typescript
 interface IntelligenceProvider {
   did: string;                          // Provider's DID
-  name: string;                         // e.g., "Anthropic", "OpenAI", "Local Ollama"
+  name: string;                         // e.g., "GitHub Models", "Local Ollama"
   providerType: "cloud" | "local" | "hybrid";
+  endpoint?: string;                    // e.g., "https://api.github.com/models" or "http://localhost:11434"
   modelsOffered: string[];              // DIDs of intelligence.model records
 }
 
@@ -278,6 +279,7 @@ interface IntelligenceModel {
   slug: string;                         // e.g., "claude-sonnet-4"
   capabilities: string[];              // e.g., ["code-generation", "analysis"]
   domains: string[];                    // e.g., ["frontend", "backend"]
+  modelOrigin?: string;                 // Original provider if different (e.g., "Anthropic", "OpenAI") — informational only
 }
 ```
 
@@ -287,7 +289,18 @@ interface IntelligenceModel {
 - Providers own model records — they attest to their models' capabilities
 - Agents reference models by DID in their profiles and task completions
 
-**MVP Simplification:** Create 2-3 provider identities and 3-4 model identities at bootstrap. Full intelligence discovery and reputation is post-MVP.
+**MVP Provider Strategy:**
+For prototyping, we use a **two-provider architecture**:
+1. **GitHub Models** (`providerType: "cloud"`) — Unified cloud gateway for commercial models
+   - Includes Claude (Anthropic), GPT (OpenAI), Phi (Microsoft), Mistral, and others from GitHub's public catalog
+   - Single point of control for cloud-based AI in the MVP
+   - Endpoint: GitHub Models API (documented but mocked in MVP)
+2. **Local Ollama** (`providerType: "local"`) — Self-hosted local inference
+   - Includes Llama 3.1 (70B), CodeLlama, and other open-source models
+   - Endpoint: `http://localhost:11434` (configurable)
+   - For local-first experimentation
+
+This split reflects how teams actually prototype: reliable cloud access via GitHub, local exploration via Ollama. Both providers demonstrate multi-provider federation while keeping the setup simple.
 
 ---
 
@@ -481,10 +494,10 @@ Mock agents with predefined capabilities, behaviors, and simulated task executio
 1. BOOTSTRAP
    ├─ Generate 6 agent identities (did:key + keypair)
    ├─ Create per-agent SQLite repositories
-   ├─ Generate intelligence provider identities (2-3 providers)
+   ├─ Generate intelligence provider identities (GitHub Models + Local Ollama)
    ├─ Create provider repositories
-   ├─ Write intelligence.provider records
-   ├─ Write intelligence.model records (3-4 models) → Firehose broadcasts
+   ├─ Write intelligence.provider records (2 providers)
+   ├─ Write intelligence.model records (cloud + local models) → Firehose broadcasts
    ├─ Write agent.profile records
    └─ Write agent.capability records → Firehose broadcasts
 

@@ -59,7 +59,7 @@ interface AgentProfile {
   "agentType": "worker",
   "intelligenceRefs": [{
     "modelDid": "did:key:z6MkCS4model1...",
-    "providerDid": "did:key:z6MkpTHR8VNs5zPNhmAE17MQ2JRNkTqHDW...",
+    "providerDid": "did:key:z6MkGitHubModels...",
     "role": "primary",
     "usedFor": ["code-generation", "code-review"]
   }],
@@ -145,7 +145,7 @@ interface AgentCapability {
 ## 3. Intelligence Provider
 
 **NSID:** `network.mycelium.intelligence.provider`
-**Purpose:** Represents an entity that operates AI models — could be a cloud provider (Anthropic, OpenAI), a self-hosted deployment (Ollama), or a compute cooperative.
+**Purpose:** Represents an entity that operates AI models — could be a unified cloud gateway (GitHub Models), a self-hosted deployment (Ollama), or a compute cooperative.
 **Stored in:** Provider's own repository.
 **rkey:** `self` (singleton per provider)
 
@@ -153,7 +153,7 @@ interface AgentCapability {
 interface IntelligenceProvider {
   $type: "network.mycelium.intelligence.provider";
   did: string;                          // Provider's DID
-  name: string;                         // e.g., "Anthropic", "OpenAI", "Local Ollama"
+  name: string;                         // e.g., "GitHub Models", "Local Ollama"
   providerType: "cloud" | "local" | "hybrid";
   description: string;                  // What this provider offers
   endpoint?: string;                    // API endpoint (optional, for discovery)
@@ -176,23 +176,25 @@ interface IntelligenceProvider {
 ```json
 {
   "$type": "network.mycelium.intelligence.provider",
-  "did": "did:key:z6MkpTHR8VNs5zPNhmAE17MQ2JRNkTqHDW...",
-  "name": "Anthropic",
+  "did": "did:key:z6MkGitHubModels...",
+  "name": "GitHub Models",
   "providerType": "cloud",
-  "description": "Cloud AI provider offering Claude model family for code generation, analysis, and reasoning.",
-  "endpoint": "https://api.anthropic.com",
+  "description": "Unified cloud gateway aggregating models from Anthropic, OpenAI, Microsoft, Meta, and other providers through GitHub's API.",
+  "endpoint": "https://api.github.com/models",
   "operator": {
-    "name": "Anthropic PBC",
-    "contactUri": "https://anthropic.com"
+    "name": "GitHub",
+    "contactUri": "https://github.com"
   },
   "modelsOffered": [
     "did:key:z6MkCS4model1...",
-    "did:key:z6MkCS4model2..."
+    "did:key:z6MkCS4model2...",
+    "did:key:z6MkGP4model1...",
+    "did:key:z6MkPH4model1..."
   ],
   "trustSignals": {
     "verified": true,
-    "uptime": 99.5,
-    "dataRetentionPolicy": "none"
+    "uptime": 99.9,
+    "dataRetentionPolicy": "minimal"
   },
   "createdAt": "2026-03-11T00:00:00Z",
   "updatedAt": "2026-03-11T00:00:00Z"
@@ -212,10 +214,11 @@ interface IntelligenceProvider {
 interface IntelligenceModel {
   $type: "network.mycelium.intelligence.model";
   did: string;                          // Model's DID
-  providerDid: string;                  // DID of the provider offering this model
+  providerDid: string;                  // DID of the provider offering this model (e.g., GitHub Models, Ollama)
   name: string;                         // e.g., "Claude Sonnet 4", "GPT-4"
   slug: string;                         // e.g., "claude-sonnet-4", "gpt-4"
   version?: string;                     // e.g., "2026-03-01"
+  modelOrigin?: string;                 // Original creator if different from provider (e.g., "Anthropic", "OpenAI") — informational only
   capabilities: string[];               // e.g., ["code-generation", "analysis", "reasoning", "conversation"]
   domains: string[];                    // e.g., ["frontend", "backend", "security"] — what it's good at
   contextWindow?: number;               // Token limit
@@ -235,10 +238,11 @@ interface IntelligenceModel {
 {
   "$type": "network.mycelium.intelligence.model",
   "did": "did:key:z6MkCS4model1...",
-  "providerDid": "did:key:z6MkpTHR8VNs5zPNhmAE17MQ2JRNkTqHDW...",
+  "providerDid": "did:key:z6MkGitHubModels...",
   "name": "Claude Sonnet 4",
   "slug": "claude-sonnet-4",
   "version": "2026-03-01",
+  "modelOrigin": "Anthropic",
   "capabilities": ["code-generation", "code-review", "analysis", "reasoning"],
   "domains": ["frontend", "backend", "security", "testing"],
   "contextWindow": 200000,

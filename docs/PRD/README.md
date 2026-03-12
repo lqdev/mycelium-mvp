@@ -164,7 +164,11 @@ AI models and providers are not metadata fields — they're first-class entities
 - Agent-intelligence composition (one agent, multiple models)
 - Trust chain completeness (agent + intelligence + provider = full accountability)
 
-In the MVP, intelligence providers and models are created at bootstrap with predefined capabilities. Full intelligence discovery and marketplace is post-MVP.
+In the MVP, intelligence uses a **two-provider architecture** for prototyping:
+- **GitHub Models** (`providerType: "cloud"`) — Unified cloud gateway offering Claude, GPT, Phi, and other commercial models via GitHub's API
+- **Local Ollama** (`providerType: "local"`) — Self-hosted inference for open-source models (Llama 3 70B, CodeLlama)
+
+This split reflects real prototyping practice: reliable cloud access through GitHub, local experimentation through Ollama. Both providers have DIDs and are first-class entities in the protocol. Full intelligence discovery and marketplace is post-MVP.
 
 ---
 
