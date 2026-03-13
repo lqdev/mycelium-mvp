@@ -181,21 +181,21 @@ This recursively sorts keys at every nesting depth, producing deterministic outp
 
 ### 2. Repository Module (`src/repository/`)
 
-SQLite-backed record store implementing the "Personal Data Server" concept. Each agent gets its own database file.
+In-memory record store implementing the "Personal Data Server" concept. Each agent gets its own isolated store backed by DuckDB for persistence.
 
 **Responsibilities:**
-- Create and manage per-agent SQLite databases
+- Create and manage per-agent in-memory stores (Map + Array)
 - Store typed records organized by collection (NSID)
 - Maintain a commit log (simplified Merkle chain)
 - Emit events to the Firehose on record creation/update/deletion
 - Support full repository export (for portability demos)
+- Async write-through to DuckDB for durability
 
 **Key Types:**
 ```typescript
 interface AgentRepository {
-  did: string;                     // DID of the entity that owns this repo
-  db: Database;                    // better-sqlite3 Database instance
-  dbPath: string;                  // e.g., "./data/z6MkhaX...doK.db"
+  did: string;          // DID of the entity that owns this repo
+  store: InMemoryStore; // Map<key, StoredRecordRow> + CommitRow[]
   identity: AgentIdentity;         // For signing records on write
   firehose: Firehose | null;       // If set, emits events on write. Null for isolated repos (tests).
 }
@@ -631,7 +631,7 @@ Layer 0 — Leaf nodes (external deps only, no internal imports)
 
 Layer 1 — Depends on Layer 0
   schemas/index.ts       ← schemas/types.ts, zod
-  repository/index.ts    ← identity/, schemas/types.ts, better-sqlite3
+  repository/index.ts    ← identity/, schemas/types.ts
   firehose/index.ts      ← schemas/types.ts
   reputation/formulas.ts ← schemas/types.ts
   orchestrator/state-machine.ts  ← schemas/types.ts
@@ -679,7 +679,7 @@ Layer 5 — Integration (imports everything)
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
 | Language | TypeScript (Node.js) | AT Protocol ecosystem alignment |
-| Storage | better-sqlite3 | Local-first, per-agent databases |
+| Storage | @duckdb/node-api | Columnar analytics, Parquet export, per-agent persistence |
 | Schema Validation | Zod | TypeScript-native, composable schemas |
 | Event Bus | EventEmitter (Node.js) | Simple pub/sub, upgradable to WebSocket |
 | Crypto | @noble/ed25519 | Ed25519 for DID and signing |

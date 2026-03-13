@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Firehose, FirehoseEvent, FirehoseFilter, FirehoseSubscription } from '../schemas/types.js';
 import { SubscriptionNotFoundError } from '../errors.js';
 import { CONSTANTS } from '../constants.js';
+import { persistFirehoseEvent } from '../storage/persistence.js';
 
 /**
  * Create a new Firehose instance.
@@ -56,6 +57,9 @@ export function unsubscribe(firehose: Firehose, subscriptionId: string): void {
  */
 export function publish(firehose: Firehose, event: FirehoseEvent): void {
   firehose.log.push(event);
+
+  // Async write-through to DuckDB (fire-and-forget, never blocks simulation)
+  persistFirehoseEvent(event);
 
   for (const sub of firehose.subscriptions.values()) {
     const { filter } = sub;

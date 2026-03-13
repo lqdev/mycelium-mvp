@@ -10,8 +10,11 @@ dist/
 !tsconfig.json
 !src/demo/dashboard/public/app.js
 
-# Data (SQLite agent repos)
+# Data
 data/
+*.duckdb
+*.duckdb.wal
+*.parquet
 
 # Environment
 .env
