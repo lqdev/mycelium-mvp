@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🍄 Mycelium Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <span class="logo">🍄 Mycelium</span>
+      <span class="subtitle">Federated Agent Orchestration Network</span>
+      <div class="status-bar">
+        <span class="status-dot" id="sse-dot" title="SSE connection"></span>
+        <span id="event-count" class="stat">0 events</span>
+        <span class="sep">·</span>
+        <span id="task-progress" class="stat">0/8 tasks</span>
+        <span class="sep">·</span>
+        <span id="agent-count" class="stat">0 agents</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Panel 1: Agent Registry -->
+    <section class="panel" id="panel-agents">
+      <h2 class="panel-title">🤖 Agent Registry</h2>
+      <div id="agents-list" class="card-list">
+        <div class="placeholder">Bootstrapping agents…</div>
+      </div>
+    </section>
+
+    <!-- Panel 2: Wanted Board -->
+    <section class="panel" id="panel-tasks">
+      <h2 class="panel-title">📋 Wanted Board</h2>
+      <div id="tasks-list" class="card-list">
+        <div class="placeholder">Waiting for project to start…</div>
+      </div>
+    </section>
+
+    <!-- Panel 3: Firehose Stream -->
+    <section class="panel" id="panel-firehose">
+      <h2 class="panel-title">
+        📡 Firehose Stream
+        <span class="filter-bar">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="task">Tasks</button>
+          <button class="filter-btn" data-filter="agent">Agents</button>
+          <button class="filter-btn" data-filter="reputation">Rep</button>
+        </span>
+      </h2>
+      <div id="firehose-list" class="event-log"></div>
+    </section>
+
+    <!-- Panel 4: Reputation Board -->
+    <section class="panel" id="panel-reputation">
+      <h2 class="panel-title">⭐ Reputation Board</h2>
+      <div id="reputation-list" class="card-list">
+        <div class="placeholder">Waiting for completed tasks…</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,253 @@
+// Mycelium MVP — Dashboard Server
+// Fastify server with REST API + SSE endpoint for the web dashboard.
+// Bootstraps the full demo internally, runs it in the background, and
+// serves real-time state at http://localhost:3000
+
+import Fastify from 'fastify';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
+import { createFirehose, subscribe, unsubscribe } from '../../firehose/index.js';
+import { bootstrapIntelligence } from '../../intelligence/index.js';
+import { bootstrapAgents, createAgentRunner } from '../../agents/engine.js';
+import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../../orchestrator/mayor.js';
+import { generateIdentity } from '../../identity/index.js';
+import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
+import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
+import type {
+  AgentCapability,
+  AgentProfile,
+  AgentRepository,
+  AggregatedReputation,
+  Firehose,
+  FirehoseEvent,
+  TaskPosting,
+  Mayor,
+} from '../../schemas/types.js';
+import { CONSTANTS } from '../../constants.js';
+import type { BootstrappedAgent } from '../../agents/engine.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PUBLIC_DIR = join(__dirname, 'public');
+
+// ─── Bootstrap state ──────────────────────────────────────────────────────────
+
+interface DemoState {
+  firehose: Firehose;
+  mayor: Mayor;
+  mayorRepo: AgentRepository;
+  agents: BootstrappedAgent[];
+}
+
+async function bootstrapDemo(): Promise<DemoState> {
+  const firehose = createFirehose();
+  const intelligence = bootstrapIntelligence(firehose);
+
+  const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
+  const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
+  const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+
+  const { agents } = bootstrapAgents(firehose, intelligence);
+
+  const runners = agents.map(({ def, identity, repo }) =>
+    createAgentRunner(def, identity, repo, mayorRepo, firehose, intelligence, undefined, { forceAccept: true }),
+  );
+  runners.forEach((r) => r.start());
+
+  return { firehose, mayor, mayorRepo, agents };
+}
+
+// ─── REST response builders ───────────────────────────────────────────────────
+
+function buildAgentList(state: DemoState) {
+  return state.agents.map(({ def, identity, repo }) => {
+    let profile: AgentProfile | null = null;
+    try {
+      profile = getRecord(repo, 'network.mycelium.agent.profile', 'self').content as AgentProfile;
+    } catch {
+      // no-op
+    }
+    const caps = listRecords(repo, 'network.mycelium.agent.capability').map(
+      (r) => r.content as AgentCapability,
+    );
+    const stamps = getStampsForAgent(state.firehose, identity.did);
+    const reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
+    return {
+      did: identity.did,
+      handle: def.handle.split('.')[0],
+      displayName: def.displayName,
+      description: def.description,
+      model: def.primaryModelSlug,
+      capabilities: caps.map((c) => ({ name: c.name, domain: c.domain, proficiency: c.proficiencyLevel })),
+      reputation,
+    };
+  });
+}
+
+function buildTaskList(state: DemoState) {
+  const tasks: Array<{ id: string; uri: string; status: string; title: string; domain: string; complexity: string; priority: string; assignee?: string }> = [];
+
+  for (const [id, info] of state.mayor.postedTasks) {
+    const def = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === id);
+    if (!def) continue;
+    let taskStatus = info.status;
+    let assigneeDid: string | undefined;
+    try {
+      const { collection, rkey } = parseAtUri(info.uri);
+      const stored = getRecord(state.mayorRepo, collection, rkey).content as TaskPosting;
+      taskStatus = stored.status;
+      assigneeDid = stored.assigneeDid;
+    } catch {
+      // use info.status
+    }
+    const agentEntry = assigneeDid
+      ? state.agents.find((a) => a.identity.did === assigneeDid)
+      : undefined;
+
+    tasks.push({
+      id,
+      uri: info.uri,
+      status: taskStatus,
+      title: def.title,
+      domain: def.requiredCapabilities[0]?.domain ?? 'general',
+      complexity: def.complexity,
+      priority: def.priority,
+      assignee: agentEntry?.def.handle.split('.')[0],
+    });
+  }
+
+  // Add un-posted tasks (still gated by dependencies)
+  for (const def of DASHBOARD_TEMPLATE.tasks) {
+    if (state.mayor.postedTasks.has(def.id)) continue;
+    tasks.push({
+      id: def.id,
+      uri: '',
+      status: 'pending',
+      title: def.title,
+      domain: def.requiredCapabilities[0]?.domain ?? 'general',
+      complexity: def.complexity,
+      priority: def.priority,
+    });
+  }
+
+  return tasks.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function buildReputationList(state: DemoState): AggregatedReputation[] {
+  return state.agents.flatMap(({ identity }) => {
+    const stamps = getStampsForAgent(state.firehose, identity.did);
+    if (stamps.length === 0) return [];
+    return [aggregateReputation(stamps)];
+  });
+}
+
+function parseAtUri(uri: string): { collection: string; rkey: string } {
+  const parts = uri.split('/');
+  return { collection: parts[3] ?? '', rkey: parts[4] ?? '' };
+}
+
+// ─── Server ───────────────────────────────────────────────────────────────────
+
+async function startServer(state: DemoState, port: number): Promise<void> {
+  const fastify = Fastify({ logger: false });
+
+  // ── Static files ──────────────────────────────────────────────────────────
+
+  fastify.get('/', async (_req, reply) => {
+    const html = await readFile(join(PUBLIC_DIR, 'index.html'), 'utf-8');
+    return reply.type('text/html').send(html);
+  });
+
+  fastify.get('/app.js', async (_req, reply) => {
+    const js = await readFile(join(PUBLIC_DIR, 'app.js'), 'utf-8');
+    return reply.type('application/javascript').send(js);
+  });
+
+  fastify.get('/style.css', async (_req, reply) => {
+    const css = await readFile(join(PUBLIC_DIR, 'style.css'), 'utf-8');
+    return reply.type('text/css').send(css);
+  });
+
+  // ── REST API ──────────────────────────────────────────────────────────────
+
+  fastify.get('/api/agents', async () => buildAgentList(state));
+
+  fastify.get('/api/tasks', async () => buildTaskList(state));
+
+  fastify.get('/api/firehose', async () => ({
+    events: state.firehose.log.slice(-200), // Last 200 events
+    total: state.firehose.log.length,
+  }));
+
+  fastify.get('/api/reputation', async () => buildReputationList(state));
+
+  fastify.get('/api/status', async () => ({
+    tasksPosted: state.mayor.postedTasks.size,
+    tasksTotal: DASHBOARD_TEMPLATE.tasks.length,
+    tasksAccepted: [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length,
+    firehoseEvents: state.firehose.log.length,
+    agents: state.agents.length,
+  }));
+
+  // ── SSE endpoint ──────────────────────────────────────────────────────────
+
+  fastify.get('/api/events', (req, reply) => {
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('Access-Control-Allow-Origin', '*');
+    reply.raw.flushHeaders();
+
+    // Replay recent events so the client catches up
+    const recentEvents = state.firehose.log.slice(-50);
+    for (const event of recentEvents) {
+      reply.raw.write(`event: ${CONSTANTS.DASHBOARD_SSE_EVENT_NAME}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+
+    // Subscribe for new events
+    const subId = subscribe(state.firehose, undefined, (event: FirehoseEvent) => {
+      if (!reply.raw.writableEnded) {
+        reply.raw.write(
+          `event: ${CONSTANTS.DASHBOARD_SSE_EVENT_NAME}\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+      }
+    });
+
+    // Send heartbeat every 15 seconds to keep connection alive
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.writableEnded) {
+        reply.raw.write(': heartbeat\n\n');
+      } else {
+        clearInterval(heartbeat);
+      }
+    }, 15_000);
+
+    req.raw.on('close', () => {
+      clearInterval(heartbeat);
+      try { unsubscribe(state.firehose, subId); } catch { /* already cleaned up */ }
+    });
+
+    // Return a never-resolving promise to keep connection open
+    return new Promise(() => {});
+  });
+
+  await fastify.listen({ port, host: '0.0.0.0' });
+  console.log(`\n🌐 Dashboard: http://localhost:${port}`);
+  console.log(`   API: http://localhost:${port}/api/agents`);
+  console.log(`   SSE: http://localhost:${port}/api/events\n`);
+}
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
+console.log('🍄 Mycelium MVP — Dashboard Server');
+console.log('   Bootstrapping demo state...');
+
+const state = await bootstrapDemo();
+
+await startServer(state, CONSTANTS.DASHBOARD_PORT);
+
+// Kick off the demo project after server is ready
+console.log('🎯 Starting project: "Build the Mycelium Dashboard"');
+console.log('   Watch the real-time stream at http://localhost:3000\n');
+startProject(state.mayor, 'Build the Mycelium Dashboard');

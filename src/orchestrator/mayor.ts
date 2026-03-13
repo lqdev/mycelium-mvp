@@ -239,7 +239,10 @@ function processClaimsForTask(
   const ranked = rankClaims(candidates, task);
   const best = ranked[0];
 
-  if (best && best.rankScore >= 0) {
+  // Assign best available candidate even if score is negative (e.g. newcomer on high task).
+  // The negative score already penalises preference — but blocking causes permanent stall
+  // when no established agent is available (common early in a demo run).
+  if (best) {
     try {
       assignTask(mayor.repo, taskUri, best.did);
       const entry = mayor.agentRegistry.get(best.did);

@@ -1,0 +1,428 @@
+/* Mycelium Dashboard — Vanilla CSS, no framework */
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --accent:    #58a6ff;
+  --green:     #3fb950;
+  --yellow:    #d29922;
+  --red:       #f85149;
+  --purple:    #bc8cff;
+
+  /* Status colours */
+  --status-open:       #58a6ff;
+  --status-claimed:    #79c0ff;
+  --status-assigned:   #d29922;
+  --status-progress:   #e3b341;
+  --status-completed:  #3fb950;
+  --status-accepted:   #2ea043;
+  --status-pending:    #484f58;
+
+  /* Trust colours */
+  --trust-newcomer:    #484f58;
+  --trust-established: #58a6ff;
+  --trust-trusted:     #3fb950;
+  --trust-expert:      #d29922;
+
+  --radius: 6px;
+  --gap:    12px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  flex-shrink: 0;
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-bar {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sep { color: var(--border); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.3s;
+}
+.status-dot.connected { background: var(--green); }
+.status-dot.error     { background: var(--red); }
+
+/* ── Main grid ───────────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: var(--gap);
+  padding: var(--gap);
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Panel ───────────────────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Card list (agents, tasks, reputation) ───────────────────────────────── */
+
+.card-list {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.placeholder {
+  color: var(--muted);
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+}
+
+/* ── Agent cards ─────────────────────────────────────────────────────────── */
+
+.agent-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.agent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.agent-handle {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.agent-model {
+  font-size: 11px;
+  color: var(--purple);
+  background: rgba(188, 140, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.agent-did {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: monospace;
+  margin-bottom: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.cap-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.2);
+}
+
+.cap-tag.expert   { color: var(--yellow); background: rgba(210, 153, 34, 0.1); border-color: rgba(210, 153, 34, 0.2); }
+.cap-tag.advanced { color: var(--green);  background: rgba(63, 185, 80, 0.1);  border-color: rgba(63, 185, 80, 0.2); }
+
+.agent-rep-mini {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.score-num {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* ── Task cards ──────────────────────────────────────────────────────────── */
+
+.task-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  transition: border-left-color 0.3s;
+}
+
+.task-card[data-status="open"]        { border-left-color: var(--status-open); }
+.task-card[data-status="claimed"]     { border-left-color: var(--status-claimed); }
+.task-card[data-status="assigned"]    { border-left-color: var(--status-assigned); }
+.task-card[data-status="in_progress"] { border-left-color: var(--status-progress); }
+.task-card[data-status="completed"]   { border-left-color: var(--status-completed); }
+.task-card[data-status="accepted"]    { border-left-color: var(--status-accepted); opacity: 0.75; }
+.task-card[data-status="pending"]     { border-left-color: var(--status-pending); opacity: 0.5; }
+
+.task-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.task-id { font-size: 10px; color: var(--muted); font-family: monospace; }
+
+.task-title { font-weight: 600; font-size: 12px; flex: 1; }
+
+.task-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.badge.domain   { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+.badge.status   { background: rgba(255,255,255,0.05);   color: var(--muted); }
+.badge.assignee { background: rgba(63, 185, 80, 0.15);  color: var(--green); }
+.badge.pending  { background: rgba(72,79,88,0.3);       color: var(--muted); }
+
+.badge.status-open        { background: rgba(88,166,255,0.15);  color: var(--status-open); }
+.badge.status-assigned    { background: rgba(210,153,34,0.15);  color: var(--yellow); }
+.badge.status-in_progress { background: rgba(227,179,65,0.15);  color: var(--status-progress); }
+.badge.status-completed   { background: rgba(63,185,80,0.15);   color: var(--green); }
+.badge.status-accepted    { background: rgba(46,160,67,0.15);   color: var(--status-accepted); }
+
+/* ── Firehose event log ───────────────────────────────────────────────────── */
+
+.event-log {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.event-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  line-height: 1.5;
+}
+
+.event-row:hover { background: rgba(255,255,255,0.04); }
+
+.event-seq  { color: var(--muted); min-width: 32px; text-align: right; }
+.event-time { color: var(--muted); font-size: 10px; }
+.event-type { font-size: 10px; padding: 0 4px; border-radius: 3px; white-space: nowrap; }
+.event-body { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.event-type.agent      { background: rgba(88,166,255,0.15);  color: var(--accent); }
+.event-type.task       { background: rgba(210,153,34,0.15);  color: var(--yellow); }
+.event-type.reputation { background: rgba(63,185,80,0.15);   color: var(--green); }
+.event-type.intel      { background: rgba(188,140,255,0.15); color: var(--purple); }
+.event-type.other      { background: rgba(255,255,255,0.05); color: var(--muted); }
+
+/* ── Filter bar ──────────────────────────────────────────────────────────── */
+
+.filter-bar {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.filter-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.filter-btn.active { background: rgba(88,166,255,0.15); border-color: var(--accent); color: var(--accent); }
+
+/* ── Reputation cards ────────────────────────────────────────────────────── */
+
+.rep-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.rep-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.rep-handle { font-weight: 700; color: var(--accent); }
+
+.trust-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.trust-badge.newcomer    { background: rgba(72,79,88,0.3);      color: var(--muted); }
+.trust-badge.established { background: rgba(88,166,255,0.15);   color: var(--accent); }
+.trust-badge.trusted     { background: rgba(63,185,80,0.15);    color: var(--green); }
+.trust-badge.expert      { background: rgba(210,153,34,0.15);   color: var(--yellow); }
+
+.rep-score {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  margin-left: auto;
+}
+
+.rep-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rep-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rep-dim-label {
+  font-size: 10px;
+  color: var(--muted);
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.rep-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rep-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.6s ease;
+}
+
+.rep-dim-val {
+  font-size: 10px;
+  color: var(--muted);
+  width: 26px;
+  text-align: right;
+}
+
+.rep-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }

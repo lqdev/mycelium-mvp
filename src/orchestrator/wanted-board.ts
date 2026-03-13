@@ -256,15 +256,20 @@ export function shouldClaim(
   const profLevels = ['beginner', 'intermediate', 'advanced', 'expert'] as const;
 
   for (const req of task.requiredCapabilities) {
-    const match = agentCapabilities.find((c) => c.domain === req.domain);
-    if (!match) return false;
+    // Check ALL capabilities in the required domain — any one qualifying is sufficient.
+    // (An agent may have multiple capabilities per domain, e.g. unit-testing +
+    //  integration-testing + e2e-testing all under domain "testing".)
+    const domainCaps = agentCapabilities.filter((c) => c.domain === req.domain);
+    if (domainCaps.length === 0) return false;
 
-    const agentProfIdx = profLevels.indexOf(match.proficiencyLevel);
-    const reqProfIdx = profLevels.indexOf(req.minProficiency);
-    if (agentProfIdx < reqProfIdx) return false;
+    const qualified = domainCaps.find((cap) => {
+      const agentProfIdx = profLevels.indexOf(cap.proficiencyLevel);
+      const reqProfIdx = profLevels.indexOf(req.minProficiency);
+      if (agentProfIdx < reqProfIdx) return false;
+      return cap.tags.filter((t) => req.tags.includes(t)).length > 0;
+    });
 
-    const overlap = match.tags.filter((t) => req.tags.includes(t)).length;
-    if (overlap === 0) return false;
+    if (!qualified) return false;
   }
 
   return true;

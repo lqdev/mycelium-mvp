@@ -205,6 +205,8 @@ export function bootstrapAgents(
  * Call start() to begin observing firehose events and claiming/executing tasks.
  *
  * @param executionDelayMs Override execution delay (0 = synchronous; omit for realistic delays)
+ * @param options.forceAccept When true, bypass the stochastic acceptRate check so every
+ *   qualified task is always claimed. Useful for demos that must reliably complete.
  */
 export function createAgentRunner(
   def: AgentDefinition,
@@ -214,6 +216,7 @@ export function createAgentRunner(
   firehose: Firehose,
   intelligence: IntelligenceBootstrapResult,
   executionDelayMs?: number,
+  options: { forceAccept?: boolean } = {},
 ): { start(): void } {
   // Map taskUri → { claimUri, taskTitle } for tracking active claims
   const claimTracker = new Map<string, { claimUri: string; taskTitle: string }>();
@@ -266,7 +269,7 @@ export function createAgentRunner(
     if (event.operation === 'create') {
       // Evaluate whether to claim this task
       if (!shouldClaim(agentCapabilities, task)) return;
-      if (Math.random() >= def.behavior.acceptRate) return;
+      if (!options.forceAccept && Math.random() >= def.behavior.acceptRate) return;
 
       // Build claim proposal
       const matchCap = def.capabilities.find((c) =>
