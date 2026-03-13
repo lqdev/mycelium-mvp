@@ -18,13 +18,18 @@ import type {
   AgentCapability,
   AgentProfile,
   AgentRepository,
+  AgentState,
   AggregatedReputation,
   Firehose,
   FirehoseEvent,
+  ReputationStamp,
+  TaskClaim,
+  TaskCompletion,
   TaskPosting,
   Mayor,
 } from '../../schemas/types.js';
 import { CONSTANTS } from '../../constants.js';
+import { AGENT_ROSTER } from '../../agents/roster.js';
 import type { BootstrappedAgent } from '../../agents/engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -147,6 +152,214 @@ function parseAtUri(uri: string): { collection: string; rkey: string } {
   return { collection: parts[3] ?? '', rkey: parts[4] ?? '' };
 }
 
+// ─── Detail builders ──────────────────────────────────────────────────────────
+
+/** Return full detail for a single agent by short handle (e.g. "atlas"). */
+function buildAgentDetail(state: DemoState, handle: string) {
+  const agent = state.agents.find((a) => a.def.handle.split('.')[0] === handle);
+  if (!agent) return null;
+
+  const { def, identity, repo } = agent;
+
+  let profile: AgentProfile | null = null;
+  try { profile = getRecord(repo, 'network.mycelium.agent.profile', 'self').content as AgentProfile; } catch { /* no-op */ }
+
+  let agentState: AgentState | null = null;
+  try { agentState = getRecord(repo, 'network.mycelium.agent.state', 'self').content as AgentState; } catch { /* no-op */ }
+
+  const caps = listRecords(repo, 'network.mycelium.agent.capability').map(
+    (r) => r.content as AgentCapability,
+  );
+
+  const stamps = getStampsForAgent(state.firehose, identity.did);
+  const reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
+
+  // Task history: claims and completions authored by this agent
+  const claims = state.firehose.log
+    .filter((e) => e.collection === 'network.mycelium.task.claim' && e.did === identity.did)
+    .map((e) => ({ uri: `at://${e.did}/${e.collection}/${e.rkey}`, seq: e.seq, timestamp: e.timestamp, ...((e.record as TaskClaim)) }));
+
+  const completions = state.firehose.log
+    .filter((e) => e.collection === 'network.mycelium.task.completion' && e.did === identity.did)
+    .map((e) => {
+      const comp = e.record as TaskCompletion;
+      const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => {
+        const info = state.mayor.postedTasks.get(t.id);
+        return info && info.uri === comp.taskUri;
+      });
+      return { uri: `at://${e.did}/${e.collection}/${e.rkey}`, seq: e.seq, timestamp: e.timestamp, taskId: taskDef?.id, taskTitle: taskDef?.title, ...comp };
+    });
+
+  // Roster behavior stats (informational, not secret internals)
+  const roster = AGENT_ROSTER.find((r) => r.handle === def.handle);
+
+  return {
+    did: identity.did,
+    handle: def.handle.split('.')[0],
+    displayName: def.displayName,
+    description: def.description,
+    model: def.primaryModelSlug,
+    intelligenceUsedFor: def.intelligenceUsedFor,
+    maxConcurrentTasks: def.maxConcurrentTasks,
+    agentType: def.agentType,
+    profile,
+    state: agentState,
+    capabilities: caps,
+    behavior: roster ? {
+      speedMultiplier: roster.behavior.speedMultiplier,
+      acceptRate: roster.behavior.acceptRate,
+    } : null,
+    stamps,
+    reputation,
+    claims,
+    completions,
+  };
+}
+
+/** Return full detail for a single task by template ID (e.g. "task-003"). */
+function buildTaskDetail(state: DemoState, taskId: string) {
+  const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === taskId);
+  if (!taskDef) return null;
+
+  const info = state.mayor.postedTasks.get(taskId);
+
+  let posting: TaskPosting | null = null;
+  let taskUri = info?.uri ?? '';
+  if (info) {
+    try {
+      const { collection, rkey } = parseAtUri(info.uri);
+      posting = getRecord(state.mayorRepo, collection, rkey).content as TaskPosting;
+    } catch { /* not yet posted */ }
+  }
+
+  // Status timeline from firehose
+  const taskRkey = taskUri ? parseAtUri(taskUri).rkey : taskId;
+  const timeline = state.firehose.log
+    .filter((e) => e.collection === 'network.mycelium.task.posting' && e.rkey === taskRkey)
+    .map((e) => ({
+      seq: e.seq,
+      operation: e.operation,
+      status: (e.record as TaskPosting | null)?.status ?? null,
+      assigneeDid: (e.record as TaskPosting | null)?.assigneeDid ?? null,
+      timestamp: e.timestamp,
+    }));
+
+  // Competing claims
+  const claims = taskUri
+    ? state.firehose.log
+        .filter((e) => e.collection === 'network.mycelium.task.claim' && (e.record as TaskClaim).taskUri === taskUri)
+        .map((e) => {
+          const claim = e.record as TaskClaim;
+          const agent = state.agents.find((a) => a.identity.did === e.did);
+          return {
+            seq: e.seq,
+            timestamp: e.timestamp,
+            claimerHandle: agent?.def.handle.split('.')[0] ?? claim.claimerDid,
+            claimerDid: claim.claimerDid,
+            proposal: claim.proposal,
+            matchingCapabilities: claim.matchingCapabilities,
+            status: claim.status,
+          };
+        })
+    : [];
+
+  // Completion
+  const completionEvent = taskUri
+    ? state.firehose.log.find(
+        (e) => e.collection === 'network.mycelium.task.completion' && (e.record as TaskCompletion).taskUri === taskUri,
+      )
+    : undefined;
+  const completion = completionEvent ? (completionEvent.record as TaskCompletion) : null;
+
+  // Reputation stamp for this task
+  const stamp = taskUri
+    ? (state.firehose.log
+        .find((e) => e.collection === 'network.mycelium.reputation.stamp' && (e.record as ReputationStamp).taskUri === taskUri)
+        ?.record as ReputationStamp | undefined) ?? null
+    : null;
+
+  // Dependency info
+  const deps = taskDef.dependsOn.map((depId) => {
+    const depInfo = state.mayor.postedTasks.get(depId);
+    const depDef = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === depId);
+    return { id: depId, title: depDef?.title ?? depId, status: depInfo?.status ?? 'pending' };
+  });
+
+  // What depends on this task
+  const dependents = DASHBOARD_TEMPLATE.tasks
+    .filter((t) => t.dependsOn.includes(taskId))
+    .map((t) => ({ id: t.id, title: t.title }));
+
+  // Assignee agent info
+  const assigneeAgent = posting?.assigneeDid
+    ? state.agents.find((a) => a.identity.did === posting!.assigneeDid)
+    : undefined;
+
+  return {
+    id: taskId,
+    uri: taskUri,
+    title: taskDef.title,
+    description: taskDef.description,
+    requiredCapabilities: taskDef.requiredCapabilities,
+    complexity: taskDef.complexity,
+    priority: taskDef.priority,
+    status: posting?.status ?? info?.status ?? 'pending',
+    assignee: assigneeAgent ? {
+      handle: assigneeAgent.def.handle.split('.')[0],
+      did: assigneeAgent.identity.did,
+      model: assigneeAgent.def.primaryModelSlug,
+    } : null,
+    posting,
+    timeline,
+    deps,
+    dependents,
+    claims,
+    completion,
+    stamp,
+  };
+}
+
+/** Return full detail for a single firehose event by seq number. */
+function buildEventDetail(state: DemoState, seq: number) {
+  const event = state.firehose.log.find((e) => e.seq === seq);
+  if (!event) return null;
+
+  const agent = state.agents.find((a) => a.identity.did === event.did);
+  const isMayor = event.did === state.mayor.identity.did;
+
+  return {
+    ...event,
+    authorHandle: agent ? agent.def.handle.split('.')[0] : isMayor ? 'mayor' : null,
+    authorDisplayName: agent ? agent.def.displayName : isMayor ? 'Mayor (Orchestrator)' : null,
+  };
+}
+
+/** Return all individual stamps + aggregation for an agent by handle. */
+function buildReputationDetail(state: DemoState, handle: string) {
+  const agent = state.agents.find((a) => a.def.handle.split('.')[0] === handle);
+  if (!agent) return null;
+
+  const stamps = getStampsForAgent(state.firehose, agent.identity.did);
+  const reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
+
+  const stampsWithContext = stamps.map((stamp) => {
+    const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => {
+      const info = state.mayor.postedTasks.get(t.id);
+      return info && info.uri === stamp.taskUri;
+    });
+    return { ...stamp, taskId: taskDef?.id ?? null, taskTitle: taskDef?.title ?? null };
+  });
+
+  return {
+    did: agent.identity.did,
+    handle,
+    displayName: agent.def.displayName,
+    model: agent.def.primaryModelSlug,
+    reputation,
+    stamps: stampsWithContext,
+  };
+}
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 async function startServer(state: DemoState, port: number): Promise<void> {
@@ -169,7 +382,7 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     return reply.type('text/css').send(css);
   });
 
-  // ── REST API ──────────────────────────────────────────────────────────────
+  // ── REST API (list) ───────────────────────────────────────────────────────
 
   fastify.get('/api/agents', async () => buildAgentList(state));
 
@@ -189,6 +402,34 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     firehoseEvents: state.firehose.log.length,
     agents: state.agents.length,
   }));
+
+  // ── REST API (detail) ─────────────────────────────────────────────────────
+
+  fastify.get<{ Params: { handle: string } }>('/api/agents/:handle', async (req, reply) => {
+    const detail = buildAgentDetail(state, req.params.handle);
+    if (!detail) return reply.status(404).send({ error: 'Agent not found' });
+    return detail;
+  });
+
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id', async (req, reply) => {
+    const detail = buildTaskDetail(state, req.params.id);
+    if (!detail) return reply.status(404).send({ error: 'Task not found' });
+    return detail;
+  });
+
+  fastify.get<{ Params: { seq: string } }>('/api/firehose/:seq', async (req, reply) => {
+    const seq = parseInt(req.params.seq, 10);
+    if (isNaN(seq)) return reply.status(400).send({ error: 'Invalid seq' });
+    const detail = buildEventDetail(state, seq);
+    if (!detail) return reply.status(404).send({ error: 'Event not found' });
+    return detail;
+  });
+
+  fastify.get<{ Params: { handle: string } }>('/api/reputation/:handle', async (req, reply) => {
+    const detail = buildReputationDetail(state, req.params.handle);
+    if (!detail) return reply.status(404).send({ error: 'Agent not found' });
+    return detail;
+  });
 
   // ── SSE endpoint ──────────────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ dist/
 *.d.ts
 !vitest.config.ts
 !tsconfig.json
+!src/demo/dashboard/public/app.js
 
 # Data (SQLite agent repos)
 data/
