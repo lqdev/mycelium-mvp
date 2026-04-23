@@ -130,11 +130,11 @@ src/
 ## Testing
 
 ```bash
-npm test          # run all 179 tests once
+npm test          # run all 210 tests once
 npm run test:watch  # watch mode
 ```
 
-Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence.
+Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, storage.
 
 ---
 
@@ -156,8 +156,10 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 - Connect to real GitHub Models API (swap mock stubs for HTTP client)
 - Add Ollama HTTP client for local inference
 - ~~Persist Firehose events~~ ✅ (DuckDB persistence layer)
-- Parquet export for offline analysis (`/api/export/firehose.parquet`)
+- ~~Parquet export for offline analysis~~ ✅ (`/api/export/firehose.parquet`)
 - Agent-to-agent delegation (sub-task spawning)
 - Rework/rejection flow (Mayor rejects poor-quality completions)
-- WebSocket-based Firehose (real network streaming)
+- Persistent agent identities (`did:plc` on a self-hosted PDS)
+- Real AT Protocol repo operations (`com.atproto.repo.*`)
+- WebSocket-based Firehose (real AT Protocol relay subscription)
 - Multiple orchestrators demonstrating inter-orchestrator federation
