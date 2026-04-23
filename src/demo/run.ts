@@ -414,7 +414,7 @@ async function main(): Promise<void> {
   // Graceful shutdown: close DuckDB after a brief delay for async writes to flush
   await new Promise((resolve) => setTimeout(resolve, 200));
   shutdownPersistence();
-  await dbInstance.close();
+  dbInstance.closeSync();
 }
 
 // ─── Artifact name map (for summary output) ───────────────────────────────────
