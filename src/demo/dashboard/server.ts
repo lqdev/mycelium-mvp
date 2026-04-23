@@ -20,6 +20,7 @@ import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.
 import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence, registerAgentMapping } from '../../storage/persistence.js';
 import { getLexicons, getLexicon } from '../../lexicon/index.js';
 import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
+import { initJetstream } from '../../atproto/jetstream.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -98,6 +99,7 @@ async function bootstrapDemo(): Promise<DemoState> {
   // Bridge init happens BEFORE saving agent identities so plcDid is set on first save (no double-save race).
   const pdsEndpoint = process.env.PDS_ENDPOINT;
   const pdsAdminPassword = process.env.PDS_ADMIN_PASSWORD;
+  let localPlcDids = new Set<string>();
   if (pdsEndpoint && pdsAdminPassword) {
     const plcDids = await initPdsBridge(
       agents.map(({ def }) => ({ handle: def.handle })),
@@ -112,6 +114,14 @@ async function bootstrapDemo(): Promise<DemoState> {
         identity.plcDid = plcDid;
       }
     }
+    localPlcDids = new Set(plcDids.values());
+  }
+
+  // Init Jetstream federation consumer if configured (env-gated).
+  // localPlcDids prevents re-broadcasting our own events back into the firehose.
+  const jetstreamEndpoint = process.env.JETSTREAM_ENDPOINT;
+  if (jetstreamEndpoint) {
+    initJetstream(jetstreamEndpoint, firehose, localPlcDids);
   }
 
   // Save new agent identities with plcDid already populated (single save, no race)

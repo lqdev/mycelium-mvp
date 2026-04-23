@@ -18,6 +18,8 @@ services:
       # PDS bridge — enabled when running with --profile pds
       - PDS_ENDPOINT=${PDS_ENDPOINT:-}
       - PDS_ADMIN_PASSWORD=${PDS_ADMIN_PASSWORD:-}
+      # Jetstream federation — enabled when running with --profile jetstream
+      - JETSTREAM_ENDPOINT=${JETSTREAM_ENDPOINT:-}
 
   # ── Local AT Protocol PDS ─────────────────────────────────────────────────
   # Opt-in: docker compose --profile pds up
@@ -51,6 +53,27 @@ services:
       - LOG_ENABLED=1
       - LOG_LEVEL=info
 
+  # ── Jetstream relay ──────────────────────────────────────────────────────
+  # Opt-in: docker compose --profile jetstream up
+  # Subscribes to the local PDS firehose and re-emits events as JSON over WebSocket.
+  # Enables multi-node federation: a second Mycelium instance can subscribe to
+  # ws://localhost:6008/subscribe to receive events from this instance.
+  #
+  # Usage:
+  #   JETSTREAM_ENDPOINT=ws://jetstream:6008/subscribe \
+  #   docker compose --profile pds --profile jetstream up
+  jetstream:
+    image: ghcr.io/bluesky-social/jetstream:latest
+    profiles: ["jetstream"]
+    ports:
+      - "6008:6008"
+    depends_on:
+      - pds
+    environment:
+      - JETSTREAM_WEBSOCKET_URLS=ws://pds:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_LISTEN_ADDR=:6008
+
 volumes:
   mycelium-data:
   pds-data:
+
