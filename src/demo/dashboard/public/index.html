@@ -62,6 +62,27 @@
     </section>
   </main>
 
+  <!-- SQL Explorer panel (full-width, below grid) -->
+  <section class="sql-panel" id="panel-sql">
+    <div class="sql-panel-header">
+      <span class="sql-panel-title">🔍 SQL Explorer</span>
+      <div class="sql-presets">
+        <button class="sql-preset" data-sql="SELECT * FROM agent_identities">identities</button>
+        <button class="sql-preset" data-sql="SELECT collection, COUNT(*) AS cnt FROM firehose_events GROUP BY 1 ORDER BY 2 DESC">events by type</button>
+        <button class="sql-preset" data-sql="SELECT collection, rkey, created_at FROM records ORDER BY created_at DESC LIMIT 20">recent records</button>
+        <button class="sql-preset" data-sql="SELECT * FROM commits ORDER BY seq DESC LIMIT 20">recent commits</button>
+      </div>
+      <button class="sql-toggle" id="sql-toggle" title="Collapse">▼</button>
+    </div>
+    <div class="sql-panel-body" id="sql-body">
+      <div class="sql-input-row">
+        <textarea id="sql-input" class="sql-textarea" placeholder="SELECT * FROM agent_identities  (Ctrl+Enter to run)" rows="2" spellcheck="false"></textarea>
+        <button id="sql-run" class="sql-run-btn">Run</button>
+      </div>
+      <div id="sql-results" class="sql-results"></div>
+    </div>
+  </section>
+
   <!-- Slide-over detail panel -->
   <div class="overlay" id="overlay" aria-hidden="true"></div>
   <aside class="detail-panel" id="detail-panel" aria-hidden="true">

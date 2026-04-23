@@ -53,6 +53,7 @@ function statusBadgeClass(status) {
     in_progress: 'status-in_progress',
     completed: 'status-completed',
     accepted: 'status-accepted',
+    rejected: 'status-rejected',
   };
   return map[status] || '';
 }
@@ -65,6 +66,7 @@ function statusLabel(status) {
     in_progress: '⟳ in progress',
     completed: '✓ completed',
     accepted: '✅ accepted',
+    rejected: '✗ rejected',
     pending: '⊡ pending',
   };
   return map[status] || status;
@@ -620,6 +622,21 @@ function renderTaskDetail(data) {
       ${renderStampCard(data.stamp)}
     </div>` : '';
 
+  const rejectionsArr = data.rejections || [];
+  const rejectionsHtml = rejectionsArr.length > 0 ? `
+    <div class="detail-section">
+      <div class="detail-section-title">Rejection History (${rejectionsArr.length})</div>
+      ${rejectionsArr.map((r, i) => `
+        <div class="rejection-card">
+          <div class="rejection-header">
+            <span class="badge status status-rejected">✗ rejected</span>
+            <strong style="font-size:12px;color:var(--accent)">${esc(r.agentHandle || shortDid(r.agentDid))}</strong>
+            <span style="font-size:10px;color:var(--muted)">#${i + 1}</span>
+          </div>
+          <div class="rejection-reason">${esc(r.reason)}</div>
+        </div>`).join('')}
+    </div>` : '';
+
   bodyEl.innerHTML = `
     <div class="kv-table">
       <span class="kv-key">id</span><span class="kv-val mono">${esc(data.id)}</span>
@@ -651,6 +668,7 @@ function renderTaskDetail(data) {
     </div>
     ${completionHtml}
     ${stampHtml}
+    ${rejectionsHtml}
   `;
 }
 
@@ -770,11 +788,84 @@ function renderStampCard(stamp, showTaskLink = false) {
   `;
 }
 
+// ── SQL Explorer ──────────────────────────────────────────────────────────────
+
+function initSqlPanel() {
+  const toggle = document.getElementById('sql-toggle');
+  const body = document.getElementById('sql-body');
+  const input = document.getElementById('sql-input');
+  const runBtn = document.getElementById('sql-run');
+  const results = document.getElementById('sql-results');
+
+  toggle.addEventListener('click', () => {
+    const collapsed = body.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? '▶' : '▼';
+    toggle.title = collapsed ? 'Expand' : 'Collapse';
+  });
+
+  async function runQuery() {
+    const sql = input.value.trim();
+    if (!sql) return;
+    runBtn.disabled = true;
+    runBtn.textContent = '…';
+    results.innerHTML = '';
+    try {
+      const res = await fetch(`/api/sql?q=${encodeURIComponent(sql)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        results.innerHTML = `<div class="sql-error">${esc(json.error || 'Unknown error')}</div>`;
+        return;
+      }
+      const rows = json.rows || [];
+      if (rows.length === 0) {
+        results.innerHTML = `<div class="sql-count">No rows returned.</div>`;
+        return;
+      }
+      const cols = Object.keys(rows[0]);
+      const headerHtml = cols.map((c) => `<th>${esc(c)}</th>`).join('');
+      const rowsHtml = rows.map((r) =>
+        `<tr>${cols.map((c) => {
+          const v = r[c];
+          const str = v === null ? '<span style="color:var(--muted)">null</span>' : esc(String(v));
+          return `<td title="${esc(String(v ?? ''))}">${str}</td>`;
+        }).join('')}</tr>`
+      ).join('');
+      results.innerHTML = `
+        <div class="sql-count">${rows.length} row${rows.length !== 1 ? 's' : ''}</div>
+        <div class="sql-table-wrap">
+          <table class="sql-table"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>
+        </div>`;
+    } catch (err) {
+      results.innerHTML = `<div class="sql-error">${esc(err.message)}</div>`;
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run';
+    }
+  }
+
+  runBtn.addEventListener('click', runQuery);
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      runQuery();
+    }
+  });
+
+  document.querySelectorAll('.sql-preset').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      input.value = btn.dataset.sql;
+      runQuery();
+    });
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initDetailPanel();
+  initSqlPanel();
   fetchAll();
   connectSSE();
 

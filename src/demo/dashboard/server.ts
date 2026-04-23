@@ -16,7 +16,7 @@ import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../../orchestrato
 import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
-import { createDuckDB, queryAll, execute } from '../../storage/duckdb.js';
+import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.js';
 import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence } from '../../storage/persistence.js';
 import type {
   AgentCapability,
@@ -310,6 +310,16 @@ function buildTaskDetail(state: DemoState, taskId: string) {
         ?.record as ReputationStamp | undefined) ?? null
     : null;
 
+  // Rejection history for this task
+  const rejections = (taskUri ? state.mayor.rejectionLog.get(taskUri) : undefined)?.map(
+    (r) => ({
+      agentDid: r.agentDid,
+      agentHandle:
+        state.agents.find((a) => a.identity.did === r.agentDid)?.def.handle.split('.')[0] ?? null,
+      reason: r.reason,
+    }),
+  ) ?? [];
+
   // Dependency info
   const deps = taskDef.dependsOn.map((depId) => {
     const depInfo = state.mayor.postedTasks.get(depId);
@@ -348,6 +358,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     claims,
     completion,
     stamp,
+    rejections,
   };
 }
 
@@ -499,6 +510,50 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     };
   });
 
+  // ── Inspection endpoints ──────────────────────────────────────────────────
+
+  /** Read-only SQL explorer — only SELECT and WITH (CTEs) allowed. */
+  fastify.get<{ Querystring: { q: string } }>('/api/sql', async (req, reply) => {
+    const conn = getConn();
+    if (!conn) return reply.status(503).send({ error: 'Persistence not initialized' });
+
+    const sql = (req.query.q ?? '').trim();
+    if (!sql) return reply.status(400).send({ error: 'Query parameter ?q= is required' });
+
+    // Only allow read statements — must start with SELECT or WITH (for CTEs)
+    if (!/^(SELECT|WITH)\b/i.test(sql)) {
+      return reply.status(400).send({ error: 'Only SELECT statements are allowed' });
+    }
+
+    try {
+      const rows = await queryAll(conn, sql);
+      return { rows, count: rows.length };
+    } catch (err) {
+      return reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /** AT URI resolver — look up a record by at://did/collection/rkey URI. */
+  fastify.get<{ Querystring: { uri: string } }>('/api/record', async (req, reply) => {
+    const uri = (req.query.uri ?? '').trim();
+    if (!uri) return reply.status(400).send({ error: 'Query parameter ?uri= is required' });
+    if (!uri.startsWith('at://')) return reply.status(400).send({ error: 'URI must start with at://' });
+
+    const conn = getConn();
+    if (!conn) return reply.status(503).send({ error: 'Persistence not initialized' });
+
+    const row = await queryOne<{
+      uri: string; repo_did: string; collection: string; rkey: string;
+      content: string; sig: string; created_at: string; updated_at: string;
+    }>(conn, 'SELECT * FROM records WHERE uri = $1', [uri]);
+
+    if (!row) return reply.status(404).send({ error: `No record found for URI: ${uri}` });
+
+    let content: unknown = row.content;
+    try { content = JSON.parse(row.content); } catch { /* return raw string */ }
+    return { ...row, content };
+  });
+
   // ── SSE endpoint ──────────────────────────────────────────────────────────
 
   fastify.get('/api/events', (req, reply) => {
@@ -545,6 +600,8 @@ async function startServer(state: DemoState, port: number): Promise<void> {
   console.log(`\n🌐 Dashboard: http://localhost:${port}`);
   console.log(`   API: http://localhost:${port}/api/agents`);
   console.log(`   SSE: http://localhost:${port}/api/events`);
+  console.log(`   SQL: http://localhost:${port}/api/sql?q=SELECT+*+FROM+agent_identities`);
+  console.log(`   Record: http://localhost:${port}/api/record?uri=at://...`);
   console.log(`   Export: http://localhost:${port}/api/export/firehose.parquet`);
   console.log(`   DB Stats: http://localhost:${port}/api/db/stats\n`);
 }
