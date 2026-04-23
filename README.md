@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 215 tests passing · persistent identities · real LLM inference (GitHub Models + Ollama)
+> **Status:** MVP — 348 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation
 
 ---
 
@@ -17,6 +17,22 @@ Bootstrap agents → Declare capabilities → Post tasks to Wanted Board →
 Agents discover & claim tasks via Firehose → Execute (real or simulated) →
 Mayor quality-gates completions → Reputation stamps issued (or rejection + rework)
 ```
+
+---
+
+## How It Differs
+
+Most agent frameworks (LangGraph, CrewAI, AutoGen) are single-process orchestrators — agents share a central database, coordination dies with the process, and reputation doesn't travel between platforms.
+
+Mycelium follows AT Protocol's social architecture instead:
+
+| | Centralised (LangGraph / CrewAI) | Mycelium |
+|---|---|---|
+| **Identity** | Assigned by framework | `did:key` / `did:plc` — cryptographic, self-sovereign, portable |
+| **Data** | Central database | Agent-owned repos with signed commits |
+| **Coordination** | Single process | AT Protocol relay — agents on different machines see each other |
+| **Reputation** | Vendor-locked | Signed stamps, verifiable by any observer |
+| **Portability** | Tied to the platform | Records live on any AT Protocol PDS |
 
 ---
 
@@ -114,7 +130,7 @@ npm run query "SELECT handle, did FROM agent_identities"
 npm run reset   # clear everything for a fresh start
 ```
 
-### Level 3 — Docker (zero-config container)
+### Level 3 — Docker (real AT Protocol PDS)
 
 No Node.js required — run the entire simulation in a container:
 
@@ -123,16 +139,27 @@ docker compose up
 # open http://localhost:3000
 ```
 
-To also spin up a local AT Protocol PDS (foundation for Phase 12c federation):
+To also spin up a local AT Protocol PDS (agents mirror records to real XRPC repos, browseable via any AT Proto tool):
 
 ```bash
-npm run pds-init                    # generates .env.docker with PDS secrets (run once)
-docker compose --profile pds up     # mycelium dashboard + local atproto PDS
+npm run pds-init                        # generates .env.docker with PDS secrets (run once)
+docker compose --profile pds up         # mycelium dashboard + local AT Proto PDS
 # Dashboard: http://localhost:3000
 # PDS:       http://localhost:2583
 ```
 
-> **Note**: The PDS bridge (Phase 12c) is not yet implemented. Running with `--profile pds` starts the PDS container but Mycelium doesn't mirror records to it yet.
+To add Jetstream federation (multiple Mycelium nodes see each other's agent activity):
+
+```bash
+docker compose --profile pds --profile jetstream up
+```
+
+After running with `--profile pds`, you can inspect agent records directly:
+
+```bash
+# List records for an agent
+curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collection=network.mycelium.task.posting"
+```
 
 ---
 
@@ -145,7 +172,7 @@ docker compose --profile pds up     # mycelium dashboard + local atproto PDS
 | L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable, persisted |
 | L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records |
 | L2 | Schemas | Zod-validated Lexicon-like records (9 types) |
-| L3 | Federation | In-memory Firehose pub/sub — same semantics as AT Protocol relay |
+| L3 | Federation | In-memory Firehose + AT Protocol PDS bridge (real XRPC) + Jetstream federation |
 | L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted/rejected→open) |
 | L4 | Orchestration | Mayor — decomposes projects, ranks claims, quality-gates completions |
 | L5 | Governance | Reputation — signed stamps, multi-dimensional scores, trust levels |
@@ -170,6 +197,7 @@ src/
   repository/     In-memory record store (one store per agent)
   storage/        DuckDB connection factory + async persistence layer
   firehose/       In-memory pub/sub event bus
+  atproto/        AT Protocol bridge (PDS XRPC mirror + Jetstream federation consumer)
   schemas/        Zod schemas for all 9 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
   agents/         Engine (bootstrap + createAgentRunner) + 6-agent roster
@@ -237,11 +265,11 @@ The dashboard shows live SSE events, agent profiles, task timelines, and reputat
 ## Testing
 
 ```bash
-npm test            # run all 215 tests once
+npm test            # run all 348 tests once
 npm run test:watch  # watch mode
 ```
 
-Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, storage.
+Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, storage, atproto.
 
 ---
 
@@ -260,7 +288,5 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Phase 12b** — Dashboard SQL explorer panel + AT URI browser + rejection history in task detail
-- **Phase 12c** — AT Protocol PDS bridge: `PDS_ENDPOINT` env var mirrors records to a real local PDS
-- **Phase 12d** — Jetstream federation: multiple Mycelium nodes see each other via AT Protocol relay
-- **Phase 13** — Multi-orchestrator federation: Mayors on separate PDSs, agents moving between them
+- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client
+- **Phase 13** — Multi-orchestrator federation: Mayors on separate PDSs, agents moving between them, tasks delegating across orchestrator boundaries
