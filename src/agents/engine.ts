@@ -22,6 +22,8 @@ import {
   type IntelligenceBootstrapResult,
   resolveModelDid,
 } from '../intelligence/index.js';
+import { callModel } from '../intelligence/client.js';
+import { buildSystemPrompt, buildUserPrompt, parseTaskCompletionResponse } from '../intelligence/prompts.js';
 import { AGENT_ROSTER, TASK_ARTIFACTS, type AgentDefinition, type CapabilityDef } from './roster.js';
 import { CONSTANTS } from '../constants.js';
 
@@ -230,7 +232,7 @@ export function createAgentRunner(
     ? intelligence.providers.githubModels.identity.did
     : intelligence.providers.ollama.identity.did;
 
-  function executeTask(task: TaskPosting, taskUri: string, claimUri: string): void {
+  async function executeTask(task: TaskPosting, taskUri: string, claimUri: string): Promise<void> {
     // The rkey is the last segment of the task URI; matches TASK_ARTIFACTS keys
     const taskId = taskUri.split('/').pop() ?? taskUri;
     const artifactNames = TASK_ARTIFACTS[taskId] ?? [`output-${taskId}.ts`];
@@ -239,8 +241,31 @@ export function createAgentRunner(
       CONSTANTS.SIMULATED_DURATION_MINUTES[task.complexity] * def.behavior.speedMultiplier,
     );
 
+    // Try real LLM inference; fall back to simulated output if unavailable or disabled.
+    let llmResult = null;
+    try {
+      const matchCap =
+        def.capabilities.find((c) => task.requiredCapabilities.some((r) => r.domain === c.domain)) ??
+        def.capabilities[0];
+      const rawResponse = await callModel(
+        [
+          {
+            role: 'system',
+            content: buildSystemPrompt(matchCap?.domain ?? 'general', def.displayName, matchCap?.tools ?? []),
+          },
+          { role: 'user', content: buildUserPrompt(task, artifactNames) },
+        ],
+        def.primaryModelSlug,
+      );
+      if (rawResponse) llmResult = parseTaskCompletionResponse(rawResponse);
+    } catch {
+      // callModel already returns null on failure; this guards against unexpected throws
+    }
+
     const results: CompletionResults = {
-      summary: `Completed: ${task.title}. Implemented using ${agentCapabilities[0]?.tools?.join(', ') ?? 'standard tools'}.`,
+      summary:
+        llmResult?.summary ??
+        `Completed: ${task.title}. Implemented using ${agentCapabilities[0]?.tools?.join(', ') ?? 'standard tools'}.`,
       artifacts: artifactNames.map((name, i) => ({
         name,
         type: getArtifactType(name),
@@ -250,16 +275,20 @@ export function createAgentRunner(
       })),
       metrics: {
         executionTime: `PT${simulatedMins}M`,
-        linesOfCode: artifactNames.length * (40 + Math.floor(Math.random() * 80)),
-        testsPassed: 8 + Math.floor(Math.random() * 17),
-        testsTotal: 10 + Math.floor(Math.random() * 15),
-        coveragePercent: 82 + Math.floor(Math.random() * 14),
+        linesOfCode: llmResult?.linesOfCode ?? artifactNames.length * (40 + Math.floor(Math.random() * 80)),
+        testsPassed: llmResult?.testsPassed ?? (8 + Math.floor(Math.random() * 17)),
+        testsTotal: llmResult?.testsTotal ?? (10 + Math.floor(Math.random() * 15)),
+        coveragePercent: llmResult?.coveragePercent ?? (82 + Math.floor(Math.random() * 14)),
       },
-      intelligenceUsed: modelDid ? { modelDid, providerDid } : undefined,
+      // Only attribute intelligence when real inference was actually used
+      intelligenceUsed: llmResult && modelDid ? { modelDid, providerDid } : undefined,
     };
 
-    completeTask(repo, claimUri, taskUri, results);
-    updateAgentStateRemove(repo, taskUri);
+    try {
+      completeTask(repo, claimUri, taskUri, results);
+    } finally {
+      updateAgentStateRemove(repo, taskUri);
+    }
   }
 
   function handleTaskEvent(event: { operation: string; record: unknown; did: string; collection: string; rkey: string }): void {
@@ -317,7 +346,7 @@ export function createAgentRunner(
                     (CONSTANTS.EXECUTION_JITTER_MAX - CONSTANTS.EXECUTION_JITTER_MIN)),
             );
 
-      setTimeout(() => executeTask(task, taskUri, tracked.claimUri), delay);
+      setTimeout(() => void executeTask(task, taskUri, tracked.claimUri), delay);
     }
   }
 

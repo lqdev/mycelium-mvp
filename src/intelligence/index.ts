@@ -1,5 +1,5 @@
 // Intelligence module: bootstrap providers + models, lookup helpers.
-// All endpoints are stored as metadata only — no real HTTP calls in MVP.
+// HTTP inference clients live in client.ts; prompt templates in prompts.ts.
 
 import type {
   AgentIdentity,
