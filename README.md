@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** Prototype / MVP — all mechanics working, LLM inference is simulated.
+> **Status:** MVP — 215 tests passing · persistent identities · real LLM inference (GitHub Models + Ollama)
 
 ---
 
@@ -14,8 +14,8 @@ The MVP demonstrates the full lifecycle:
 
 ```
 Bootstrap agents → Declare capabilities → Post tasks to Wanted Board →
-Agents discover & claim tasks via Firehose → Execute (simulated) →
-Completion recorded with intelligence attribution → Reputation stamps issued
+Agents discover & claim tasks via Firehose → Execute (real or simulated) →
+Mayor quality-gates completions → Reputation stamps issued (or rejection + rework)
 ```
 
 ---
@@ -27,11 +27,18 @@ Completion recorded with intelligence attribution → Reputation stamps issued
 ```bash
 npm install
 
-# Run the full E2E CLI demo (~50 seconds)
+# Level 0 — Pure simulation (zero config, ~50 seconds)
 npm run demo
 
-# Run the web dashboard (http://localhost:3000)
+# Web dashboard (http://localhost:3000)
 npm run dashboard
+
+# Inspect the DuckDB database directly
+npm run query "SELECT * FROM agent_identities"
+npm run query "SELECT collection, COUNT(*) FROM firehose_events GROUP BY 1 ORDER BY 2 DESC"
+
+# Clear all data for a fresh start
+npm run reset
 
 # Run tests
 npm test
@@ -39,13 +46,26 @@ npm test
 
 ---
 
-## Demo Output
+## DevEx Ladder
+
+Each level builds on the previous. Level 0 works out of the box.
+
+| Level | Command | What you need |
+|-------|---------|--------------|
+| **0 — Simulation** | `npm run demo` | Nothing — pure simulation |
+| **1 — Real LLM** | `MYCELIUM_ENABLE_INFERENCE=true GITHUB_TOKEN=ghp_... npm run demo` | Free GitHub token |
+| **1b — Local LLM** | `MYCELIUM_ENABLE_INFERENCE=true LOCAL_ONLY_MODEL=qwen2.5:7b npm run demo` | Ollama installed |
+| **2 — Persistent** | `npm run demo` *(after first run)* | Nothing extra — DIDs persist via DuckDB |
+| **3 — Real AT Proto** | `docker-compose up` | Docker *(Phase 12c — coming soon)* |
+
+Copy `.env.example` to `.env` and uncomment variables as needed.
+
+### Level 0 — Demo Output
 
 `npm run demo` bootstraps a 6-agent team and runs an 8-task project end-to-end:
 
 ```
 🍄  MYCELIUM MVP — Federated Agent Orchestration Demo
-══════════════════════════════════════════════════════════════
 
 🤖 atlas    ← Frontend specialist (claude-sonnet-4 via GitHub Models)
 🤖 beacon   ← Backend architect   (claude-sonnet-4 via GitHub Models)
@@ -59,11 +79,39 @@ npm test
 
 [████████] 8/8 accepted ✅
 
-Agent  Tasks  Score  Trust        Model
-atlas    3      85   🔵 established  claude-sonnet-4
-beacon   1      86   ⬜ newcomer     claude-sonnet-4
-cipher   1      83   ⬜ newcomer     gpt-4
+Agent   Tasks  Score  Trust           Rejected  Model
+atlas     3      85   🔵 established       0    claude-sonnet-4
+beacon    1      86   ⬜ newcomer           0    claude-sonnet-4
+cipher    1      83   ⬜ newcomer           0    gpt-4
 ...
+```
+
+### Level 1 — Real LLM Inference
+
+All 6 agents use a local Ollama model (no API token required):
+
+```bash
+# Install Ollama: https://ollama.ai
+ollama pull qwen2.5:7b
+
+MYCELIUM_ENABLE_INFERENCE=true LOCAL_ONLY_MODEL=qwen2.5:7b DEMO_TIMEOUT_MS=600000 npm run demo
+```
+
+Or use GitHub Models (free token at github.com/settings/tokens):
+
+```bash
+MYCELIUM_ENABLE_INFERENCE=true GITHUB_TOKEN=ghp_... npm run demo
+```
+
+### Level 2 — Persistent Identities
+
+Agent DIDs persist in `data/mycelium.duckdb` across runs. Run the demo twice — reputation accumulates, the same agents return, their work history grows.
+
+```bash
+npm run demo    # first run: generates identities
+npm run demo    # second run: reuses same DIDs, adds more stamps
+npm run query "SELECT handle, did FROM agent_identities"
+npm run reset   # clear everything for a fresh start
 ```
 
 ---
@@ -74,12 +122,12 @@ cipher   1      83   ⬜ newcomer     gpt-4
 
 | Layer | Component | MVP Implementation |
 |-------|-----------|-------------------|
-| L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable |
-| L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records, not orchestrators |
+| L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable, persisted |
+| L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records |
 | L2 | Schemas | Zod-validated Lexicon-like records (9 types) |
 | L3 | Federation | In-memory Firehose pub/sub — same semantics as AT Protocol relay |
-| L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted) |
-| L4 | Orchestration | Mayor — decomposes projects, ranks claims, issues reputation stamps |
+| L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted/rejected→open) |
+| L4 | Orchestration | Mayor — decomposes projects, ranks claims, quality-gates completions |
 | L5 | Governance | Reputation — signed stamps, multi-dimensional scores, trust levels |
 
 ### Intelligence Providers
@@ -105,21 +153,26 @@ src/
   schemas/        Zod schemas for all 9 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
   agents/         Engine (bootstrap + createAgentRunner) + 6-agent roster
-  orchestrator/   Mayor + Wanted Board (claim ranking, task lifecycle)
+  orchestrator/   Mayor + Wanted Board (claim ranking, task lifecycle, quality gate)
   reputation/     Stamp creation, aggregation, trust levels, rankClaims
   constants.ts    All magic numbers centralised
   demo/
-    run.ts        Full E2E CLI demo
+    run.ts        Full E2E CLI demo (DuckDB-backed, persistent identities)
     dashboard/    Fastify SSE/REST server + HTML/CSS/JS dashboard
+scripts/
+  reset.ts        Clears data/ for a fresh start
+  query.ts        DuckDB SQL inspector (npm run query "<SQL>")
 ```
 
 ---
 
 ## Key Concepts
 
-**Agent Sovereignty** — Each agent has its own data store, persisted to DuckDB. The Mayor coordinates but never owns agent data. An agent can export its repo (identity + capability records + work history + reputation stamps) and take it to any compatible orchestrator.
+**Agent Sovereignty** — Each agent has its own data store, persisted to DuckDB. The Mayor coordinates but never owns agent data. Agent identities (DIDs + keypairs) persist across runs.
 
 **Wanted Board** — Tasks posted as `task.posting` records in the Mayor's repo. Agents subscribe to the Firehose, evaluate tasks via `shouldClaim()` (domain + proficiency + tag matching), file `task.claim` records in their own repos. The Mayor ranks competing claims by capability fit, reputation, and load, then assigns the best candidate.
+
+**Quality Gate** — The Mayor evaluates completions against quality thresholds (pass rate, coverage, summary depth). Poor-quality work is rejected: the task reopens, the agent earns a negative stamp, and another agent can claim it. After 3 attempts, the task is force-accepted.
 
 **Reputation** — After task acceptance, the Mayor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps live in the Mayor's repo, signed and attributable. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`).
 
@@ -127,10 +180,44 @@ src/
 
 ---
 
+## Inspection
+
+### DuckDB SQL Explorer
+
+```bash
+# Who are the agents?
+npm run query "SELECT handle, did, created_at FROM agent_identities"
+
+# What happened in the last run?
+npm run query "SELECT seq, collection, rkey, operation FROM firehose_events ORDER BY seq DESC LIMIT 20"
+
+# Who earned the most stamps?
+npm run query "SELECT did, COUNT(*) AS stamps FROM firehose_events WHERE collection = 'network.mycelium.reputation.stamp' GROUP BY did ORDER BY 2 DESC"
+
+# Which tasks got rejected?
+npm run query "SELECT rkey, content FROM records WHERE collection = 'network.mycelium.task.posting'"
+```
+
+### DuckDB CLI (if installed)
+
+```bash
+duckdb data/mycelium.duckdb
+```
+
+### Dashboard
+
+```bash
+npm run dashboard   # → http://localhost:3000
+```
+
+The dashboard shows live SSE events, agent profiles, task timelines, and reputation stamps.
+
+---
+
 ## Testing
 
 ```bash
-npm test          # run all 210 tests once
+npm test            # run all 215 tests once
 npm run test:watch  # watch mode
 ```
 
@@ -153,13 +240,7 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- Connect to real GitHub Models API (swap mock stubs for HTTP client)
-- Add Ollama HTTP client for local inference
-- ~~Persist Firehose events~~ ✅ (DuckDB persistence layer)
-- ~~Parquet export for offline analysis~~ ✅ (`/api/export/firehose.parquet`)
-- Agent-to-agent delegation (sub-task spawning)
-- Rework/rejection flow (Mayor rejects poor-quality completions)
-- Persistent agent identities (`did:plc` on a self-hosted PDS)
-- Real AT Protocol repo operations (`com.atproto.repo.*`)
-- WebSocket-based Firehose (real AT Protocol relay subscription)
-- Multiple orchestrators demonstrating inter-orchestrator federation
+- **Phase 12b** — Dashboard SQL explorer panel + AT URI browser + rejection history in task detail
+- **Phase 12c** — AT Protocol PDS bridge: `PDS_ENDPOINT` env var mirrors records to a real local PDS
+- **Phase 12d** — Jetstream federation: multiple Mycelium nodes see each other via AT Protocol relay
+- **Phase 13** — Multi-orchestrator federation: Mayors on separate PDSs, agents moving between them

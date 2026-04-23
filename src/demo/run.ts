@@ -1,6 +1,7 @@
 // Mycelium MVP — E2E Demo Runner
 // Full bootstrap sequence + agent simulation + colored CLI output + summary table.
 
+import { mkdirSync } from 'node:fs';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import { createFirehose, subscribe } from '../firehose/index.js';
@@ -13,6 +14,8 @@ import { getStampsForAgent, aggregateReputation } from '../reputation/index.js';
 import type { AgentProfile, AgentCapability, AggregatedReputation, Mayor } from '../schemas/types.js';
 import { CONSTANTS } from '../constants.js';
 import type { BootstrappedAgent } from '../agents/engine.js';
+import { createDuckDB } from '../storage/duckdb.js';
+import { initPersistence, loadIdentities, saveIdentity, shutdownPersistence } from '../storage/persistence.js';
 
 const isDryRun = process.argv.includes('--dry-run');
 if (isDryRun) {
@@ -107,21 +110,38 @@ async function main(): Promise<void> {
   console.log(section('🍄  MYCELIUM MVP — Federated Agent Orchestration Demo'));
   console.log(chalk.dim('  A federated AI agent network simulating the AT Protocol.\n'));
 
-  // ─── Step 1: Firehose ───────────────────────────────────────────────────────
+  // ─── Step 1: DuckDB (persistent identities + records) ──────────────────────
+  mkdirSync('./data', { recursive: true });
+  const { instance: dbInstance, conn } = await createDuckDB('./data/mycelium.duckdb');
+  initPersistence(conn);
+  const savedIdentities = await loadIdentities();
+  const isFirstRun = savedIdentities.size === 0;
+  console.log(
+    isFirstRun
+      ? chalk.dim('  🆕 First run — generating persistent agent identities...')
+      : chalk.dim(`  🔄 Resuming — loaded ${savedIdentities.size} saved identities from DuckDB`),
+  );
+
+  // ─── Step 2: Firehose ───────────────────────────────────────────────────────
   const firehose = createFirehose();
 
-  // ─── Step 2: Intelligence providers + models ────────────────────────────────
+  // ─── Step 3: Intelligence providers + models ────────────────────────────────
   console.log(chalk.bold('⚡ Bootstrapping intelligence providers...'));
-  const intelligence = bootstrapIntelligence(firehose);
+  const intelligence = bootstrapIntelligence(firehose, savedIdentities);
   const { providers, models } = intelligence;
 
-  // ─── Step 3: Mayor (subscribe BEFORE agents so registry is populated) ───────
+  // ─── Step 4: Mayor (subscribe BEFORE agents so registry is populated) ───────
   const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
   const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
 
-  // ─── Step 4: Bootstrap agents ───────────────────────────────────────────────
-  const { agents } = bootstrapAgents(firehose, intelligence);
+  // ─── Step 5: Bootstrap agents ───────────────────────────────────────────────
+  const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
+
+  // Persist any newly generated identities (fire-and-forget)
+  for (const id of [...intelligence.newIdentities, ...newAgentIdentities]) {
+    saveIdentity(id);
+  }
 
   // ─── Step 5: Print bootstrap summary ────────────────────────────────────────
   let totalCapabilities = 0;
@@ -388,7 +408,13 @@ async function main(): Promise<void> {
   console.log(chalk.green(
     `\n🍄 Demo complete!  ${totalStamps} reputation stamps issued | ${totalFirehoseEvents} total firehose events`,
   ));
-  console.log(chalk.dim('   Run `npm run dashboard` to explore results in the web UI at http://localhost:3000\n'));
+  console.log(chalk.dim('   Run `npm run dashboard` to explore results in the web UI at http://localhost:3000'));
+  console.log(chalk.dim('   Run `npm run query "<SQL>"` to inspect the DuckDB database directly\n'));
+
+  // Graceful shutdown: close DuckDB after a brief delay for async writes to flush
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  shutdownPersistence();
+  await dbInstance.close();
 }
 
 // ─── Artifact name map (for summary output) ───────────────────────────────────

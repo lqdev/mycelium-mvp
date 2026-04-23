@@ -136,15 +136,22 @@ function updateAgentStateRemove(repo: AgentRepository, taskUri: string): void {
  * Create all 6 agent identities, repos, and initial records.
  * Writes agent.profile, agent.capability, and agent.state to each agent's repo.
  * Mayor must be subscribed to the firehose before calling this.
+ *
+ * @param savedIdentities If provided, reuses existing identities instead of generating new ones.
+ *   New identities are indicated by returning `newIdentities` for the caller to persist.
  */
 export function bootstrapAgents(
   firehose: Firehose,
   intelligence: IntelligenceBootstrapResult,
-): AgentBootstrapResult {
+  savedIdentities?: Map<string, AgentIdentity>,
+): AgentBootstrapResult & { newIdentities: AgentIdentity[] } {
   const agents: BootstrappedAgent[] = [];
+  const newIdentities: AgentIdentity[] = [];
 
   for (const def of AGENT_ROSTER) {
-    const identity = generateIdentity(def.handle, def.displayName);
+    const existing = savedIdentities?.get(def.handle);
+    const identity = existing ?? generateIdentity(def.handle, def.displayName);
+    if (!existing) newIdentities.push(identity);
     const repo = createMemoryRepository(identity, firehose);
 
     const now = new Date().toISOString();
@@ -197,7 +204,7 @@ export function bootstrapAgents(
     agents.push({ def, identity, repo });
   }
 
-  return { agents };
+  return { agents, newIdentities };
 }
 
 // ─── Agent runner ─────────────────────────────────────────────────────────────

@@ -47,6 +47,15 @@ const SCHEMA_SQL = `
     ON firehose_events(did);
   CREATE INDEX IF NOT EXISTS idx_events_col_did
     ON firehose_events(collection, did);
+
+  CREATE TABLE IF NOT EXISTS agent_identities (
+    handle       VARCHAR PRIMARY KEY,
+    did          VARCHAR NOT NULL,
+    display_name VARCHAR NOT NULL,
+    public_key   VARCHAR NOT NULL,
+    private_key  VARCHAR NOT NULL,
+    created_at   VARCHAR NOT NULL
+  );
 `;
 
 /**

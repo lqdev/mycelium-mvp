@@ -11,7 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo": "tsx --no-warnings src/demo/run.ts",
-    "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts"
+    "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts",
+    "reset": "tsx --no-warnings scripts/reset.ts",
+    "query": "tsx --no-warnings scripts/query.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.0-r.1",

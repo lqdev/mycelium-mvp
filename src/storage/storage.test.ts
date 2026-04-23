@@ -14,9 +14,11 @@ import {
   persistDeleteRecord,
   persistFirehoseEvent,
   loadFirehoseLog,
+  loadIdentities,
+  saveIdentity,
   getConn,
 } from './persistence.js';
-import type { CommitRow, FirehoseEvent, StoredRecordRow } from '../schemas/types.js';
+import type { AgentIdentity, CommitRow, FirehoseEvent, StoredRecordRow } from '../schemas/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -458,5 +460,102 @@ describe('loadFirehoseLog()', () => {
     const events = await loadFirehoseLog();
     const lastSeq = events[events.length - 1]!.seq;
     expect(lastSeq + 1).toBe(31); // next seq after recovery
+  });
+});
+
+// ─── loadIdentities / saveIdentity ───────────────────────────────────────────
+
+function makeIdentity(overrides: Partial<AgentIdentity> = {}): AgentIdentity {
+  return {
+    did: 'did:key:z6MkTestAgent',
+    handle: 'test-agent.mycelium.local',
+    displayName: 'Test Agent',
+    publicKey: new Uint8Array(32).fill(1),
+    privateKey: new Uint8Array(32).fill(2),
+    createdAt: '2024-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('loadIdentities() / saveIdentity()', () => {
+  let instance: DuckDBInstance;
+  let conn: DuckDBConnection;
+
+  beforeEach(async () => {
+    ({ instance, conn } = await createDuckDB());
+    initPersistence(conn);
+  });
+
+  afterEach(() => {
+    shutdownPersistence();
+    instance.closeSync();
+  });
+
+  it('returns empty Map when no identities saved', async () => {
+    const result = await loadIdentities();
+    expect(result.size).toBe(0);
+  });
+
+  it('returns empty Map when persistence is not initialized', async () => {
+    shutdownPersistence();
+    const result = await loadIdentities();
+    expect(result.size).toBe(0);
+  });
+
+  it('saveIdentity() is a no-op when persistence is not initialized (does not throw)', () => {
+    shutdownPersistence();
+    expect(() => saveIdentity(makeIdentity())).not.toThrow();
+  });
+
+  it('round-trips an identity: save then load', async () => {
+    const identity = makeIdentity();
+    saveIdentity(identity);
+    await flush();
+
+    const loaded = await loadIdentities();
+    expect(loaded.size).toBe(1);
+    const saved = loaded.get(identity.handle);
+    expect(saved).toBeDefined();
+    expect(saved!.did).toBe(identity.did);
+    expect(saved!.handle).toBe(identity.handle);
+    expect(saved!.displayName).toBe(identity.displayName);
+    expect(saved!.createdAt).toBe(identity.createdAt);
+  });
+
+  it('preserves public and private key bytes across round-trip', async () => {
+    const identity = makeIdentity({
+      publicKey: new Uint8Array([10, 20, 30]),
+      privateKey: new Uint8Array([40, 50, 60]),
+    });
+    saveIdentity(identity);
+    await flush();
+
+    const loaded = (await loadIdentities()).get(identity.handle)!;
+    expect(Array.from(loaded.publicKey)).toEqual([10, 20, 30]);
+    expect(Array.from(loaded.privateKey)).toEqual([40, 50, 60]);
+  });
+
+  it('upserts on duplicate handle (last write wins)', async () => {
+    const id1 = makeIdentity({ did: 'did:key:z6MkFirst' });
+    const id2 = makeIdentity({ did: 'did:key:z6MkSecond' });
+    saveIdentity(id1);
+    await flush();
+    saveIdentity(id2);
+    await flush();
+
+    const loaded = await loadIdentities();
+    expect(loaded.size).toBe(1);
+    expect(loaded.get(id1.handle)!.did).toBe('did:key:z6MkSecond');
+  });
+
+  it('loads multiple identities keyed by handle', async () => {
+    saveIdentity(makeIdentity({ handle: 'agent-a.mycelium.local', did: 'did:key:z6MkA' }));
+    saveIdentity(makeIdentity({ handle: 'agent-b.mycelium.local', did: 'did:key:z6MkB' }));
+    await flush();
+
+    const loaded = await loadIdentities();
+    expect(loaded.size).toBe(2);
+    expect(loaded.get('agent-a.mycelium.local')!.did).toBe('did:key:z6MkA');
+    expect(loaded.get('agent-b.mycelium.local')!.did).toBe('did:key:z6MkB');
   });
 });

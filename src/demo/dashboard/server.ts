@@ -17,7 +17,7 @@ import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
 import { createDuckDB, queryAll, execute } from '../../storage/duckdb.js';
-import { initPersistence, loadFirehoseLog, getConn, shutdownPersistence } from '../../storage/persistence.js';
+import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence } from '../../storage/persistence.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -66,13 +66,26 @@ async function bootstrapDemo(): Promise<DemoState> {
     console.log(`[dashboard] Restored ${savedEvents.length} events from DuckDB`);
   }
 
-  const intelligence = bootstrapIntelligence(firehose);
+  // Load saved agent identities for persistence across runs
+  const savedIdentities = await loadIdentities();
+  console.log(
+    savedIdentities.size > 0
+      ? `[dashboard] Loaded ${savedIdentities.size} saved identities from DuckDB`
+      : '[dashboard] First run — generating fresh agent identities',
+  );
+
+  const intelligence = bootstrapIntelligence(firehose, savedIdentities);
 
   const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
   const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
 
-  const { agents } = bootstrapAgents(firehose, intelligence);
+  const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
+
+  // Persist any newly generated identities (fire-and-forget)
+  for (const id of [...intelligence.newIdentities, ...newAgentIdentities]) {
+    saveIdentity(id);
+  }
 
   const runners = agents.map(({ def, identity, repo }) =>
     createAgentRunner(def, identity, repo, mayorRepo, firehose, intelligence, undefined, { forceAccept: true }),

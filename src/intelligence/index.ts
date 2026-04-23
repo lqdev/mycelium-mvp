@@ -26,6 +26,8 @@ export interface IntelligenceBootstrapResult {
     llama3: AgentIdentity;
     codellama: AgentIdentity;
   };
+  /** Identities freshly generated this run (not loaded from DB) — caller should persist these. */
+  newIdentities: AgentIdentity[];
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -34,24 +36,38 @@ export interface IntelligenceBootstrapResult {
  * Bootstrap both intelligence providers and all 6 models.
  * Writes intelligence.provider and intelligence.model records to provider repos.
  * Returns all identities and repos for use by the agent bootstrap.
+ *
+ * @param savedIdentities If provided, reuses existing identities by handle instead of generating new ones.
  */
-export function bootstrapIntelligence(firehose: Firehose): IntelligenceBootstrapResult {
+export function bootstrapIntelligence(
+  firehose: Firehose,
+  savedIdentities?: Map<string, AgentIdentity>,
+): IntelligenceBootstrapResult {
   const now = new Date().toISOString();
+  const newIdentities: AgentIdentity[] = [];
+
+  function getOrGenerate(handle: string, displayName: string): AgentIdentity {
+    const existing = savedIdentities?.get(handle);
+    if (existing) return existing;
+    const id = generateIdentity(handle, displayName);
+    newIdentities.push(id);
+    return id;
+  }
 
   // Step 1: Create provider identities + repos
-  const githubModelsIdentity = generateIdentity('github-models.mycelium.local', 'GitHub Models');
-  const ollamaIdentity = generateIdentity('ollama.mycelium.local', 'Local Ollama');
+  const githubModelsIdentity = getOrGenerate('github-models.mycelium.local', 'GitHub Models');
+  const ollamaIdentity = getOrGenerate('ollama.mycelium.local', 'Local Ollama');
 
   const githubModelsRepo = createMemoryRepository(githubModelsIdentity, firehose);
   const ollamaRepo = createMemoryRepository(ollamaIdentity, firehose);
 
   // Step 2: Create model identities
-  const claudeSonnet4 = generateIdentity('claude-sonnet-4.github-models.local', 'Claude Sonnet 4');
-  const claudeHaiku4 = generateIdentity('claude-haiku-4.github-models.local', 'Claude Haiku 4');
-  const gpt4 = generateIdentity('gpt-4.github-models.local', 'GPT-4');
-  const phi4 = generateIdentity('phi-4.github-models.local', 'Phi-4');
-  const llama3 = generateIdentity('llama-3-70b.ollama.local', 'Llama 3 70B');
-  const codellama = generateIdentity('codellama.ollama.local', 'CodeLlama');
+  const claudeSonnet4 = getOrGenerate('claude-sonnet-4.github-models.local', 'Claude Sonnet 4');
+  const claudeHaiku4 = getOrGenerate('claude-haiku-4.github-models.local', 'Claude Haiku 4');
+  const gpt4 = getOrGenerate('gpt-4.github-models.local', 'GPT-4');
+  const phi4 = getOrGenerate('phi-4.github-models.local', 'Phi-4');
+  const llama3 = getOrGenerate('llama-3-70b.ollama.local', 'Llama 3 70B');
+  const codellama = getOrGenerate('codellama.ollama.local', 'CodeLlama');
 
   // Step 3: Write model records to provider repos
   const githubModelDids: string[] = [];
@@ -209,6 +225,7 @@ export function bootstrapIntelligence(firehose: Firehose): IntelligenceBootstrap
       ollama: { identity: ollamaIdentity, repo: ollamaRepo },
     },
     models: { claudeSonnet4, claudeHaiku4, gpt4, phi4, llama3, codellama },
+    newIdentities,
   };
 }
 

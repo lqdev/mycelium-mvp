@@ -4,7 +4,7 @@
 
 import type { DuckDBConnection } from './duckdb.js';
 import { execute, queryAll } from './duckdb.js';
-import type { CommitRow, FirehoseEvent, StoredRecordRow } from '../schemas/types.js';
+import type { CommitRow, FirehoseEvent, StoredRecordRow, AgentIdentity } from '../schemas/types.js';
 
 let _conn: DuckDBConnection | null = null;
 
@@ -103,6 +103,54 @@ export function persistFirehoseEvent(event: FirehoseEvent): void {
       );
     } catch (err) {
       console.error('[persistence] firehose write failed:', err);
+    }
+  })();
+}
+
+/** Load all saved agent identities from DuckDB (returns empty Map if none). */
+export async function loadIdentities(): Promise<Map<string, AgentIdentity>> {
+  if (!_conn) return new Map();
+  const rows = await queryAll<{
+    handle: string; did: string; display_name: string;
+    public_key: string; private_key: string; created_at: string;
+  }>(_conn, 'SELECT * FROM agent_identities');
+
+  const result = new Map<string, AgentIdentity>();
+  for (const row of rows) {
+    result.set(row.handle, {
+      did: row.did,
+      handle: row.handle,
+      displayName: row.display_name,
+      publicKey: Buffer.from(row.public_key, 'hex'),
+      privateKey: Buffer.from(row.private_key, 'hex'),
+      createdAt: row.created_at,
+    });
+  }
+  return result;
+}
+
+/** Upsert an agent identity into DuckDB (fire-and-forget). */
+export function saveIdentity(identity: AgentIdentity): void {
+  if (!_conn) return;
+  const conn = _conn;
+  void (async () => {
+    try {
+      await execute(
+        conn,
+        `INSERT OR REPLACE INTO agent_identities
+           (handle, did, display_name, public_key, private_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          identity.handle,
+          identity.did,
+          identity.displayName,
+          Buffer.from(identity.publicKey).toString('hex'),
+          Buffer.from(identity.privateKey).toString('hex'),
+          identity.createdAt,
+        ],
+      );
+    } catch (err) {
+      console.error('[persistence] identity save failed:', err);
     }
   })();
 }
