@@ -9,6 +9,11 @@ const GITHUB_API_VERSION = '2022-11-28';
 const OLLAMA_BASE = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
 const CALL_TIMEOUT_MS = 30_000;
 
+// When set, ALL model calls route to Ollama with this tag — bypasses cloud routing entirely.
+// Useful for local-only demos without a GITHUB_TOKEN.
+// Example: LOCAL_ONLY_MODEL=qwen2.5:7b npm run demo
+const LOCAL_ONLY_MODEL = process.env.LOCAL_ONLY_MODEL;
+
 // Internal slug → GitHub Models API model ID (publisher/model format).
 // Claude models aren't on the GitHub Models catalog — substituted with GPT-4.1 equivalents.
 // Users who want Anthropic models should wire ANTHROPIC_API_KEY in a future phase.
@@ -49,10 +54,13 @@ export async function callModel(
   if (!process.env.MYCELIUM_ENABLE_INFERENCE) return null;
 
   try {
+    if (LOCAL_ONLY_MODEL) {
+      return await callOllama(LOCAL_ONLY_MODEL, messages, options);
+    }
     if (GITHUB_MODELS_SLUGS.has(modelSlug)) {
       return await callGitHubModels(messages, modelSlug, options);
     }
-    return await callOllama(messages, modelSlug, options);
+    return await callOllama(OLLAMA_MODEL_IDS[modelSlug] ?? modelSlug, messages, options);
   } catch (err) {
     if (process.env.MYCELIUM_DEBUG) {
       console.warn(
@@ -105,11 +113,10 @@ async function callGitHubModels(
 }
 
 async function callOllama(
+  modelTag: string,
   messages: ChatMessage[],
-  modelSlug: string,
   options: { maxTokens?: number },
 ): Promise<string> {
-  const modelId = OLLAMA_MODEL_IDS[modelSlug] ?? modelSlug;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
 
@@ -118,7 +125,7 @@ async function callOllama(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: modelId,
+        model: modelTag,
         messages,
         max_tokens: options.maxTokens ?? 1024,
         stream: false,
