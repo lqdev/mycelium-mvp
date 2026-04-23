@@ -17,7 +17,7 @@ import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
 import { createDuckDB, queryAll, execute } from '../../storage/duckdb.js';
-import { initPersistence, loadFirehoseLog, getConn } from '../../storage/persistence.js';
+import { initPersistence, loadFirehoseLog, getConn, shutdownPersistence } from '../../storage/persistence.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -47,12 +47,13 @@ interface DemoState {
   mayor: Mayor;
   mayorRepo: AgentRepository;
   agents: BootstrappedAgent[];
+  dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
 }
 
 async function bootstrapDemo(): Promise<DemoState> {
   // Ensure data directory exists and open DuckDB
   mkdirSync('./data', { recursive: true });
-  const { conn } = await createDuckDB('./data/mycelium.duckdb');
+  const { instance: dbInstance, conn } = await createDuckDB('./data/mycelium.duckdb');
   initPersistence(conn);
 
   const firehose = createFirehose();
@@ -78,7 +79,7 @@ async function bootstrapDemo(): Promise<DemoState> {
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, agents };
+  return { firehose, mayor, mayorRepo, agents, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -541,6 +542,16 @@ console.log('🍄 Mycelium MVP — Dashboard Server');
 console.log('   Bootstrapping demo state...');
 
 const state = await bootstrapDemo();
+
+// Graceful shutdown: close DuckDB so in-flight async writes can flush
+function shutdown(): void {
+  console.log('\n[dashboard] Shutting down...');
+  shutdownPersistence();
+  state.dbInstance.closeSync();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 await startServer(state, CONSTANTS.DASHBOARD_PORT);
 

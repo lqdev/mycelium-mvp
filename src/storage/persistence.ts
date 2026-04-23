@@ -4,7 +4,7 @@
 
 import type { DuckDBConnection } from './duckdb.js';
 import { execute, queryAll } from './duckdb.js';
-import type { CommitRow, FirehoseEvent, InMemoryStore, StoredRecordRow } from '../schemas/types.js';
+import type { CommitRow, FirehoseEvent, StoredRecordRow } from '../schemas/types.js';
 
 let _conn: DuckDBConnection | null = null;
 
@@ -118,7 +118,7 @@ export async function loadFirehoseLog(): Promise<FirehoseEvent[]> {
   }>(_conn, 'SELECT * FROM firehose_events ORDER BY seq ASC');
 
   return rows.map((r) => ({
-    seq: r.seq,
+    seq: Number(r.seq),
     type: r.type as 'commit',
     operation: r.operation as 'create' | 'update' | 'delete',
     did: r.did,
@@ -127,38 +127,6 @@ export async function loadFirehoseLog(): Promise<FirehoseEvent[]> {
     record: r.record != null ? JSON.parse(r.record) as unknown : null,
     timestamp: r.timestamp,
   }));
-}
-
-/** Load records + commits for a specific repo DID into an InMemoryStore. */
-export async function loadRepoStore(repoDid: string): Promise<InMemoryStore | null> {
-  if (!_conn) return null;
-
-  const records = await queryAll<StoredRecordRow>(
-    _conn,
-    `SELECT uri, collection, rkey, content, sig, created_at, updated_at
-     FROM records WHERE repo_did = $1`,
-    [repoDid],
-  );
-
-  const commits = await queryAll<CommitRow>(
-    _conn,
-    `SELECT seq, operation, record_uri, content_hash, repo_root_hash, timestamp
-     FROM commits WHERE repo_did = $1 ORDER BY seq ASC`,
-    [repoDid],
-  );
-
-  const store: InMemoryStore = {
-    records: new Map(),
-    commits,
-    seq: commits.length > 0 ? commits[commits.length - 1].seq : 0,
-  };
-
-  for (const row of records) {
-    const key = `${row.collection}\0${row.rkey}`;
-    store.records.set(key, row);
-  }
-
-  return store;
 }
 
 /** Return the live DuckDB connection (for dashboard SQL queries). */

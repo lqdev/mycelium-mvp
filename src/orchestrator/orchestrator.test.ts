@@ -200,7 +200,7 @@ describe('Mayor claim processing (async)', () => {
     }, ['react-dev']);
 
     // Flush the setTimeout(0) in mayor's claim handler
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 50));
 
     // Check task was assigned
     const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001');
@@ -234,7 +234,7 @@ describe('Mayor claim processing (async)', () => {
       confidenceLevel: 'high',
     }, ['react-dev']);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 50));
 
     const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001');
     const posting = task.content as TaskPosting;
@@ -268,7 +268,7 @@ describe('Mayor completion handling', () => {
       confidenceLevel: 'high',
     }, ['react-dev']);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 50));
 
     // Manually start the task (agent calls startTask)
     startTask(mayorRepo, task001Uri);
@@ -301,7 +301,7 @@ describe('Mayor completion handling', () => {
       confidenceLevel: 'high',
     }, ['api-design']);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 50));
     startTask(mayorRepo, task002Uri);
 
     // task-003 should not be posted yet

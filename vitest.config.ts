@@ -6,12 +6,10 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     passWithNoTests: true,
-    // Run in forked child processes so Node.js built-ins (node:sqlite) are
-    // resolved natively rather than through Vite's module transformer.
+    // Run in forked child processes so DuckDB's native binary loads correctly.
     pool: 'forks',
     poolOptions: {
       forks: {
-        // Suppress the node:sqlite experimental warning in test output
         execArgv: ['--no-warnings'],
       },
     },
@@ -21,6 +19,4 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts', 'src/demo/**'],
     },
   },
-  // No plugins needed — node:sqlite is accessed via createRequire in src/db-sync.ts
-  // to bypass Vite's static import analysis (node:sqlite is not in builtinModules).
 });
