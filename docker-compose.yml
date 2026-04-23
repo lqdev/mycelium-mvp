@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # ── Mycelium dashboard ────────────────────────────────────────────────────
+  mycelium:
+    build: .
+    # DuckDB ships prebuilt linux/amd64 binaries — pin platform to avoid
+    # issues on ARM hosts (e.g. Apple Silicon running Docker Desktop).
+    platform: linux/amd64
+    ports:
+      - "3000:3000"
+    volumes:
+      - mycelium-data:/app/data
+    environment:
+      # Set to "true" to enable real LLM inference (requires GITHUB_TOKEN or LOCAL_ONLY_MODEL)
+      - MYCELIUM_ENABLE_INFERENCE=${MYCELIUM_ENABLE_INFERENCE:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - LOCAL_ONLY_MODEL=${LOCAL_ONLY_MODEL:-}
+      # Uncomment when Phase 12c (PDS bridge) lands:
+      # - PDS_ENDPOINT=http://pds:2583
+
+  # ── Local AT Protocol PDS ─────────────────────────────────────────────────
+  # Opt-in: docker compose --profile pds up
+  #
+  # First-time setup:
+  #   npm run pds-init        # generates .env.docker with PDS secrets
+  #
+  # After Phase 12c is implemented, uncomment PDS_ENDPOINT above so Mycelium
+  # mirrors records to the PDS for real AT Protocol federation.
+  pds:
+    image: ghcr.io/bluesky-social/pds:latest
+    profiles: ["pds"]
+    platform: linux/amd64
+    ports:
+      - "2583:2583"
+    volumes:
+      - pds-data:/pds
+    env_file: .env.docker
+    environment:
+      - PDS_HOSTNAME=${PDS_HOSTNAME:-localhost}
+      - PDS_PORT=2583
+      - PDS_DATA_DIRECTORY=/pds
+      - PDS_BLOBSTORE_DISK_LOCATION=/pds/blobs
+      - PDS_DID_PLC_URL=https://plc.directory
+      - PDS_BSKY_APP_VIEW_URL=
+      - PDS_CRAWLERS=
+      - PDS_INVITE_REQUIRED=0
+      - LOG_ENABLED=1
+      - LOG_LEVEL=info
+
+volumes:
+  mycelium-data:
+  pds-data:

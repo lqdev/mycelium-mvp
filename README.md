@@ -56,7 +56,7 @@ Each level builds on the previous. Level 0 works out of the box.
 | **1 — Real LLM** | `MYCELIUM_ENABLE_INFERENCE=true GITHUB_TOKEN=ghp_... npm run demo` | Free GitHub token |
 | **1b — Local LLM** | `MYCELIUM_ENABLE_INFERENCE=true LOCAL_ONLY_MODEL=qwen2.5:7b npm run demo` | Ollama installed |
 | **2 — Persistent** | `npm run demo` *(after first run)* | Nothing extra — DIDs persist via DuckDB |
-| **3 — Real AT Proto** | `docker-compose up` | Docker *(Phase 12c — coming soon)* |
+| **3 — Docker** | `docker compose up` | Docker |
 
 Copy `.env.example` to `.env` and uncomment variables as needed.
 
@@ -113,6 +113,26 @@ npm run demo    # second run: reuses same DIDs, adds more stamps
 npm run query "SELECT handle, did FROM agent_identities"
 npm run reset   # clear everything for a fresh start
 ```
+
+### Level 3 — Docker (zero-config container)
+
+No Node.js required — run the entire simulation in a container:
+
+```bash
+docker compose up
+# open http://localhost:3000
+```
+
+To also spin up a local AT Protocol PDS (foundation for Phase 12c federation):
+
+```bash
+npm run pds-init                    # generates .env.docker with PDS secrets (run once)
+docker compose --profile pds up     # mycelium dashboard + local atproto PDS
+# Dashboard: http://localhost:3000
+# PDS:       http://localhost:2583
+```
+
+> **Note**: The PDS bridge (Phase 12c) is not yet implemented. Running with `--profile pds` starts the PDS container but Mycelium doesn't mirror records to it yet.
 
 ---
 

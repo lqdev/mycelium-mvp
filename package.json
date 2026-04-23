@@ -13,7 +13,8 @@
     "demo": "tsx --no-warnings src/demo/run.ts",
     "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts",
     "reset": "tsx --no-warnings scripts/reset.ts",
-    "query": "tsx --no-warnings scripts/query.ts"
+    "query": "tsx --no-warnings scripts/query.ts",
+    "pds-init": "tsx --no-warnings scripts/pds-init.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.0-r.1",
