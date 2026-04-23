@@ -17,7 +17,7 @@ import type {
 } from '../schemas/types.js';
 import { subscribe } from '../firehose/index.js';
 import { putRecord, getRecord } from '../repository/index.js';
-import { postTask, assignTask, reviewCompletion, transitionTask, getTask } from './wanted-board.js';
+import { postTask, assignTask, reviewCompletion, reopenTask, transitionTask, getTask } from './wanted-board.js';
 import { createStamp, aggregateReputation, rankClaims } from '../reputation/index.js';
 import { getStampsForAgent } from '../reputation/index.js';
 import type { ClaimCandidate } from '../reputation/index.js';
@@ -139,6 +139,7 @@ export function createMayor(
     template,
     agentRegistry: new Map(),
     postedTasks: new Map(),
+    rejectionLog: new Map(),
   };
 
   // Closure-based pending claims (not on Mayor struct to keep it clean)
@@ -253,6 +254,48 @@ function processClaimsForTask(
   }
 }
 
+// ─── Quality evaluation ───────────────────────────────────────────────────────
+
+const MAX_TASK_ATTEMPTS = 3;
+
+/**
+ * Evaluate completion quality using available metrics.
+ * Only applies meaningful gate when intelligenceUsed is present —
+ * simulation completions always pass to keep non-inference demos stable.
+ */
+function evaluateQuality(completion: TaskCompletion): { accept: boolean; reason: string } {
+  // If no real inference was used, accept — simulation metrics are generated, not earned
+  if (!completion.intelligenceUsed) {
+    return { accept: true, reason: 'simulation — accepted by default' };
+  }
+
+  const { testsPassed, testsTotal, coveragePercent } = completion.metrics;
+  let score = 0;
+  let checks = 0;
+
+  if (testsTotal && testsTotal > 0) {
+    checks++;
+    const passRate = (testsPassed ?? 0) / testsTotal;
+    if (passRate >= 0.8) score++;
+  }
+
+  if (coveragePercent !== undefined && coveragePercent !== null) {
+    checks++;
+    if (coveragePercent >= 60) score++;
+  }
+
+  if (completion.summary && completion.summary.length > 30) {
+    checks++;
+    score++;
+  }
+
+  // If no checkable metrics, accept — can't penalise what we can't measure
+  if (checks === 0) return { accept: true, reason: 'no measurable metrics' };
+
+  const accept = score / checks >= 0.5;
+  return { accept, reason: `quality ${score}/${checks} checks passed` };
+}
+
 // ─── Completion handling ──────────────────────────────────────────────────────
 
 function handleCompletion(
@@ -269,7 +312,68 @@ function handleCompletion(
     return; // Task may not be in in_progress state (rework path or duplicate event)
   }
 
-  // Review: always accept in MVP
+  // Find this task in postedTasks tracking
+  let taskId: string | undefined;
+  let taskInfo: { status: string; uri: string; attempts: number } | undefined;
+  for (const [id, info] of mayor.postedTasks) {
+    if (info.uri === taskUri) { taskId = id; taskInfo = info; break; }
+  }
+
+  const { accept, reason } = evaluateQuality(completion);
+  const attempts = (taskInfo?.attempts ?? 0) + 1;
+
+  if (taskInfo) taskInfo.attempts = attempts;
+
+  // Reject and re-open if quality fails and we haven't hit the attempt cap
+  if (!accept && attempts < MAX_TASK_ATTEMPTS) {
+    // Re-open task for another agent to claim
+    reopenTask(mayor.repo, taskUri);
+    if (taskInfo) taskInfo.status = 'open';
+
+    // Record rejection for demo display
+    if (taskId) {
+      const existing = mayor.rejectionLog.get(taskUri) ?? [];
+      existing.push({ agentDid: completion.completerDid, reason });
+      mayor.rejectionLog.set(taskUri, existing);
+    }
+
+    // Issue a low-quality reputation stamp
+    let task: TaskPosting;
+    try { task = getTask(mayor.repo, taskUri); } catch { return; }
+    const taskDomain = task.requiredCapabilities[0]?.domain ?? 'general';
+
+    const penaltyDims: ReputationDimensions = {
+      codeQuality: 2 + Math.random() * 2,
+      reliability: 2 + Math.random() * 2,
+      communication: 4 + Math.random() * 2,
+      creativity: 4 + Math.random() * 2,
+      efficiency: 2 + Math.random() * 2,
+    };
+    createStamp(
+      mayor.repo,
+      completion.completerDid,
+      taskUri,
+      completionUri,
+      taskDomain,
+      penaltyDims,
+      completion.intelligenceUsed?.modelDid,
+    );
+
+    // Update agent registry after rejection
+    const entry = mayor.agentRegistry.get(completion.completerDid);
+    if (entry) {
+      entry.activeTasks = entry.activeTasks.filter((t) => t !== taskUri);
+      const stamps = getStampsForAgent(mayor.firehose, completion.completerDid);
+      entry.reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
+    }
+
+    if (process.env.MYCELIUM_DEBUG) {
+      console.warn(`[mayor] rejected ${taskUri}: ${reason} (attempt ${attempts}/${MAX_TASK_ATTEMPTS})`);
+    }
+    return;
+  }
+
+  // Accept (quality passed, or force-accept after hitting attempt cap)
   reviewCompletion(mayor.repo, taskUri, true);
 
   // Determine task domain for the reputation stamp
@@ -310,7 +414,7 @@ function handleCompletion(
   }
 
   // Mark task as accepted in postedTasks tracking
-  for (const [taskId, info] of mayor.postedTasks) {
+  for (const [, info] of mayor.postedTasks) {
     if (info.uri === taskUri) {
       info.status = 'accepted';
       break;
@@ -347,7 +451,7 @@ export function startProject(mayor: Mayor, projectDescription: string): void {
         },
         taskDef.id,
       );
-      mayor.postedTasks.set(taskDef.id, { status: 'open', uri: result.uri });
+      mayor.postedTasks.set(taskDef.id, { status: 'open', uri: result.uri, attempts: 0 });
     }
   }
 }
@@ -378,7 +482,7 @@ function checkAndPostUnblockedTasks(mayor: Mayor): void {
         },
         taskDef.id,
       );
-      mayor.postedTasks.set(taskDef.id, { status: 'open', uri: result.uri });
+      mayor.postedTasks.set(taskDef.id, { status: 'open', uri: result.uri, attempts: 0 });
     }
   }
 }

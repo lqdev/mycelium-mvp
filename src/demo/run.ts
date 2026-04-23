@@ -77,7 +77,11 @@ function priorityColor(p: string): string {
 
 // ─── Wait for project completion ──────────────────────────────────────────────
 
-async function waitForCompletion(mayor: Mayor, timeoutMs = 150_000): Promise<void> {
+const DEMO_TIMEOUT_MS = process.env.DEMO_TIMEOUT_MS
+  ? parseInt(process.env.DEMO_TIMEOUT_MS, 10)
+  : 150_000;
+
+async function waitForCompletion(mayor: Mayor, timeoutMs = DEMO_TIMEOUT_MS): Promise<void> {
   const total = mayor.template.tasks.length;
   const start = Date.now();
   return new Promise((resolve, reject) => {
@@ -306,9 +310,20 @@ async function main(): Promise<void> {
     const claimers = claimLog.get(taskUri) ?? [];
     const assigned = assignLog.get(taskUri) ?? agentHandle;
 
+    const rejections = mayor.rejectionLog.get(taskUri) ?? [];
+    if (rejections.length > 0) {
+      for (const rej of rejections) {
+        const rejHandle = didToHandle.get(rej.agentDid) ?? rej.agentDid.slice(0, 10);
+        console.log(
+          `  ${chalk.red('❌')} ${chalk.red.bold(rejHandle.padEnd(8))} ` +
+          `rejected on ${chalk.white.bold(`"${taskDef.title}"`)} — ${chalk.dim(rej.reason)}`,
+        );
+      }
+    }
     console.log(
       `  ${chalk.green('✅')} ${chalk.cyan.bold(agentHandle.padEnd(8))} ` +
-      `completed ${chalk.white.bold(`"${taskDef.title}"`)}`,
+      `completed ${chalk.white.bold(`"${taskDef.title}"`)}` +
+      (info.attempts > 1 ? chalk.dim(` (attempt ${info.attempts})`) : ''),
     );
     if (claimers.length > 1) {
       const others = claimers.filter((h) => h !== agentHandle);
@@ -331,11 +346,20 @@ async function main(): Promise<void> {
       chalk.bold('Rating'),
       chalk.bold('Trust'),
       chalk.bold('Trend'),
+      chalk.bold('Rejected'),
       chalk.bold('Model'),
     ],
-    colWidths: [10, 8, 8, 14, 16, 8, 22],
+    colWidths: [10, 8, 8, 14, 16, 8, 10, 22],
     style: { compact: true },
   });
+
+  // Build a map of agentDid → total rejections across all tasks
+  const rejectionCountByDid = new Map<string, number>();
+  for (const rejList of mayor.rejectionLog.values()) {
+    for (const rej of rejList) {
+      rejectionCountByDid.set(rej.agentDid, (rejectionCountByDid.get(rej.agentDid) ?? 0) + 1);
+    }
+  }
 
   for (const { def, identity } of agents) {
     const stamps = getStampsForAgent(firehose, identity.did);
@@ -343,6 +367,7 @@ async function main(): Promise<void> {
     const handle = def.handle.split('.')[0];
     const score = rep ? Math.round(rep.overallScore) : 0;
     const taskCount = rep ? rep.totalTasks : 0;
+    const rejected = rejectionCountByDid.get(identity.did) ?? 0;
 
     summaryTable.push([
       chalk.cyan(handle),
@@ -351,6 +376,7 @@ async function main(): Promise<void> {
       taskCount > 0 ? stars(score) : chalk.gray('no stamps'),
       taskCount > 0 ? trustBadge(rep!.trustLevel) : chalk.gray('newcomer'),
       taskCount > 0 ? trendArrow(rep!.recentTrend) : chalk.gray('-'),
+      rejected > 0 ? chalk.red(String(rejected)) : chalk.gray('0'),
       chalk.magenta(def.primaryModelSlug),
     ]);
   }

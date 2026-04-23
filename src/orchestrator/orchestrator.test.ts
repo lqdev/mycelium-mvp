@@ -318,3 +318,152 @@ describe('Mayor completion handling', () => {
     expect(mayor.postedTasks.get('task-003')!.status).toBe('open');
   });
 });
+
+// ─── Quality gate and rejection tests ────────────────────────────────────────
+
+describe('Mayor quality gate', () => {
+  let firehose: Firehose;
+  let mayor: Mayor;
+  let mayorRepo: ReturnType<typeof createMemoryRepository>;
+  let agent: ReturnType<typeof makeAgent>;
+  let task001Uri: string;
+  let claimUri: string;
+
+  const poorMetrics = {
+    executionTime: 'PT10M',
+    testsPassed: 0,
+    testsTotal: 10,
+    coveragePercent: 10,
+  } satisfies { executionTime: string; testsPassed: number; testsTotal: number; coveragePercent: number };
+
+  const goodMetrics = {
+    executionTime: 'PT52M',
+    testsPassed: 18,
+    testsTotal: 20,
+    coveragePercent: 87,
+  } satisfies { executionTime: string; testsPassed: number; testsTotal: number; coveragePercent: number };
+
+  const poorSummary = 'x'; // < 30 chars
+  const goodSummary = 'Implemented full React component library with TypeScript and Storybook';
+  const modelRef = { modelDid: 'did:key:zModel', providerDid: 'did:key:zProv' };
+
+  beforeEach(async () => {
+    firehose = createFirehose();
+    ({ mayor, repo: mayorRepo } = makeMayor(firehose));
+    startProject(mayor, 'Test Project');
+
+    agent = makeAgent(firehose, 'quality-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    task001Uri = mayor.postedTasks.get('task-001')!.uri;
+    ({ uri: claimUri } = claimTask(agent.repo, task001Uri, 'Design component library', {
+      approach: 'Use React', estimatedDuration: 'PT52M', confidenceLevel: 'high',
+    }, ['react-dev']));
+
+    await new Promise((r) => setTimeout(r, 50));
+    startTask(mayorRepo, task001Uri);
+  });
+
+  it('accepts completion without intelligenceUsed (simulation always passes)', () => {
+    completeTask(agent.repo, claimUri, task001Uri, {
+      summary: poorSummary,
+      artifacts: [],
+      metrics: poorMetrics,
+      // No intelligenceUsed → simulation → must accept
+    });
+
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.status).toBe('accepted');
+    expect(mayor.rejectionLog.size).toBe(0);
+  });
+
+  it('accepts completion with good metrics when intelligenceUsed is set', () => {
+    completeTask(agent.repo, claimUri, task001Uri, {
+      summary: goodSummary,
+      artifacts: [],
+      metrics: goodMetrics,
+      intelligenceUsed: modelRef,
+    });
+
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.status).toBe('accepted');
+    expect(mayor.rejectionLog.size).toBe(0);
+  });
+
+  it('rejects and re-opens task when quality is poor and intelligenceUsed is set', () => {
+    completeTask(agent.repo, claimUri, task001Uri, {
+      summary: poorSummary,
+      artifacts: [],
+      metrics: poorMetrics,
+      intelligenceUsed: modelRef,
+    });
+
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.status).toBe('open'); // re-opened for another agent
+    expect(task.assigneeDid).toBeUndefined();
+    expect(task.completionUri).toBeUndefined();
+    expect(mayor.postedTasks.get('task-001')!.status).toBe('open');
+    expect(mayor.rejectionLog.get(task001Uri)?.length).toBe(1);
+  });
+
+  it('issues a negative reputation stamp on rejection', () => {
+    const stampsBefore = firehose.log.filter(
+      (e) => e.collection === 'network.mycelium.reputation.stamp',
+    ).length;
+
+    completeTask(agent.repo, claimUri, task001Uri, {
+      summary: poorSummary, artifacts: [], metrics: poorMetrics, intelligenceUsed: modelRef,
+    });
+
+    const stampsAfter = firehose.log.filter(
+      (e) => e.collection === 'network.mycelium.reputation.stamp',
+    ).length;
+    expect(stampsAfter).toBe(stampsBefore + 1);
+
+    // The stamp should have low overall score (negative stamp)
+    const stamp = firehose.log
+      .filter((e) => e.collection === 'network.mycelium.reputation.stamp')
+      .at(-1)!.record as { overallScore: number; assessment: string };
+    expect(stamp.overallScore).toBeLessThan(60); // Low-quality penalty dims yield low score
+  });
+
+  it('force-accepts on the third attempt regardless of quality', async () => {
+    // Attempt 1 → rejected
+    completeTask(agent.repo, claimUri, task001Uri, {
+      summary: poorSummary, artifacts: [], metrics: poorMetrics, intelligenceUsed: modelRef,
+    });
+    expect(
+      (getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting).status,
+    ).toBe('open');
+
+    // Attempt 2 → rejected
+    const { uri: claim2 } = claimTask(agent.repo, task001Uri, 'Design component library', {
+      approach: 'Retry', estimatedDuration: 'PT52M', confidenceLevel: 'low',
+    }, ['react-dev']);
+    await new Promise((r) => setTimeout(r, 50));
+    startTask(mayorRepo, task001Uri);
+
+    completeTask(agent.repo, claim2, task001Uri, {
+      summary: poorSummary, artifacts: [], metrics: poorMetrics, intelligenceUsed: modelRef,
+    });
+    expect(
+      (getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting).status,
+    ).toBe('open');
+
+    // Attempt 3 → force-accepted (attempt cap reached)
+    const { uri: claim3 } = claimTask(agent.repo, task001Uri, 'Design component library', {
+      approach: 'Last try', estimatedDuration: 'PT52M', confidenceLevel: 'low',
+    }, ['react-dev']);
+    await new Promise((r) => setTimeout(r, 50));
+    startTask(mayorRepo, task001Uri);
+
+    completeTask(agent.repo, claim3, task001Uri, {
+      summary: poorSummary, artifacts: [], metrics: poorMetrics, intelligenceUsed: modelRef,
+    });
+    const finalTask = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(finalTask.status).toBe('accepted');
+    expect(mayor.postedTasks.get('task-001')!.status).toBe('accepted');
+    expect(mayor.rejectionLog.get(task001Uri)?.length).toBe(2); // 2 rejections, then force-accept
+  });
+});

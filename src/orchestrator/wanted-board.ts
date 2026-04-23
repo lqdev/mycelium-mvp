@@ -234,6 +234,30 @@ export function reviewCompletion(
   transitionTask(orchestratorRepo, taskUri, next);
 }
 
+/**
+ * Re-open a completed task after rejection.
+ * Transitions completed → open and clears assignee / completion / claim data
+ * so the task is fully fresh for a new round of claiming.
+ *
+ * @throws InvalidStateTransitionError if task is not in "completed" state
+ */
+export function reopenTask(orchestratorRepo: AgentRepository, taskUri: string): void {
+  const { collection, rkey } = parseAtUri(taskUri);
+  const stored = getRecord(orchestratorRepo, collection, rkey);
+  const content = stored.content as TaskPosting;
+
+  validateTransition(content.status, 'open', taskUri);
+
+  putRecord(orchestratorRepo, collection, rkey, {
+    ...content,
+    status: 'open' as TaskStatus,
+    assigneeDid: undefined,
+    completionUri: undefined,
+    claimUris: [],
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 // ─── Read helpers ─────────────────────────────────────────────────────────────
 
 /** Retrieve a task.posting record by its AT URI. */

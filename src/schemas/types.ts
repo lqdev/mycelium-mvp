@@ -371,5 +371,7 @@ export interface Mayor {
   firehose: Firehose;
   template: DecompositionTemplate;
   agentRegistry: Map<string, AgentRegistryEntry>;
-  postedTasks: Map<string, { status: string; uri: string }>;
+  postedTasks: Map<string, { status: string; uri: string; attempts: number }>;
+  /** taskUri → list of rejection events for demo display */
+  rejectionLog: Map<string, Array<{ agentDid: string; reason: string }>>;
 }
