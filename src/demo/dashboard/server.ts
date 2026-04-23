@@ -620,6 +620,16 @@ async function startServer(state: DemoState, port: number): Promise<void> {
       .send(lex);
   });
 
+  // AT Proto standard Lexicon resolution path
+  fastify.get<{ Params: { nsid: string } }>('/.well-known/atproto-lexicon/:nsid', async (req, reply) => {
+    const lex = getLexicon(req.params.nsid);
+    if (!lex) return reply.status(404).send({ error: 'Lexicon not found', nsid: req.params.nsid });
+    reply
+      .header('Content-Type', 'application/json')
+      .header('Access-Control-Allow-Origin', '*')
+      .send(lex);
+  });
+
   // ── SSE endpoint ──────────────────────────────────────────────────────────
 
   fastify.get('/api/events', (req, reply) => {
