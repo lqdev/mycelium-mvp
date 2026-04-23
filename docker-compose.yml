@@ -16,8 +16,10 @@ services:
       - MYCELIUM_ENABLE_INFERENCE=${MYCELIUM_ENABLE_INFERENCE:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - LOCAL_ONLY_MODEL=${LOCAL_ONLY_MODEL:-}
-      # Uncomment when Phase 12c (PDS bridge) lands:
-      # - PDS_ENDPOINT=http://pds:2583
+      # PDS bridge — enabled when running with --profile pds
+      - PDS_ENDPOINT=${PDS_ENDPOINT:-}
+      - PDS_ADMIN_PASSWORD=${PDS_ADMIN_PASSWORD:-}
+      - PDS_HOSTNAME=${PDS_HOSTNAME:-localhost}
 
   # ── Local AT Protocol PDS ─────────────────────────────────────────────────
   # Opt-in: docker compose --profile pds up

@@ -17,8 +17,9 @@ import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
 import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.js';
-import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence } from '../../storage/persistence.js';
+import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence, registerAgentMapping } from '../../storage/persistence.js';
 import { getLexicons, getLexicon } from '../../lexicon/index.js';
+import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -86,6 +87,23 @@ async function bootstrapDemo(): Promise<DemoState> {
   // Persist any newly generated identities (fire-and-forget)
   for (const id of [...intelligence.newIdentities, ...newAgentIdentities]) {
     saveIdentity(id);
+  }
+
+  // Register did→handle mappings so the PDS bridge can route mirror calls
+  for (const { def, identity } of agents) {
+    registerAgentMapping(identity.did, def.handle);
+  }
+
+  // Init PDS bridge if configured (env-gated; no-op when PDS_ENDPOINT is not set)
+  const pdsEndpoint = process.env.PDS_ENDPOINT;
+  const pdsAdminPassword = process.env.PDS_ADMIN_PASSWORD;
+  if (pdsEndpoint && pdsAdminPassword) {
+    await initPdsBridge(
+      agents.map(({ def }) => ({ handle: def.handle })),
+      pdsEndpoint,
+      pdsAdminPassword,
+      process.env.PDS_HOSTNAME ?? 'localhost',
+    );
   }
 
   const runners = agents.map(({ def, identity, repo }) =>
@@ -623,7 +641,13 @@ async function startServer(state: DemoState, port: number): Promise<void> {
   console.log(`   Record: http://localhost:${port}/api/record?uri=at://...`);
   console.log(`   Lexicons: http://localhost:${port}/lexicon`);
   console.log(`   Export: http://localhost:${port}/api/export/firehose.parquet`);
-  console.log(`   DB Stats: http://localhost:${port}/api/db/stats\n`);
+  console.log(`   DB Stats: http://localhost:${port}/api/db/stats`);
+  if (isPdsBridgeEnabled()) {
+    console.log(`   PDS bridge: ✅ ${process.env.PDS_ENDPOINT} (records mirrored via XRPC)`);
+  } else {
+    console.log(`   PDS bridge: ⏸  disabled (set PDS_ENDPOINT + PDS_ADMIN_PASSWORD to enable)`);
+  }
+  console.log();
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────

@@ -5,17 +5,27 @@
 import type { DuckDBConnection } from './duckdb.js';
 import { execute, queryAll } from './duckdb.js';
 import type { CommitRow, FirehoseEvent, StoredRecordRow, AgentIdentity } from '../schemas/types.js';
+import { mirrorRecord, mirrorDelete } from '../atproto/pds-bridge.js';
 
 let _conn: DuckDBConnection | null = null;
+
+/** did → handle mapping used to route persistRecord calls to the PDS bridge. */
+const _handleByDid = new Map<string, string>();
 
 /** Wire the DuckDB connection. Call once at server startup before starting the simulation. */
 export function initPersistence(conn: DuckDBConnection): void {
   _conn = conn;
 }
 
+/** Register a did → handle mapping so the PDS bridge knows which session to use. */
+export function registerAgentMapping(did: string, handle: string): void {
+  _handleByDid.set(did, handle);
+}
+
 /** Tear down (for clean shutdown or tests). */
 export function shutdownPersistence(): void {
   _conn = null;
+  _handleByDid.clear();
 }
 
 // ─── Write helpers ────────────────────────────────────────────────────────────
@@ -48,6 +58,14 @@ export function persistRecord(
       console.error('[persistence] record write failed:', err);
     }
   })();
+
+  // Mirror to PDS (env-gated — no-op if PDS_ENDPOINT not set)
+  const handle = _handleByDid.get(repoDid);
+  if (handle) {
+    let content: unknown = row.content;
+    try { content = JSON.parse(row.content); } catch { /* use raw */ }
+    mirrorRecord(handle, row.collection, row.rkey, content);
+  }
 }
 
 /** Persist a record deletion + its commit row (fire-and-forget). */
@@ -77,6 +95,10 @@ export function persistDeleteRecord(
       console.error('[persistence] record delete failed:', err);
     }
   })();
+
+  // Mirror deletion to PDS (env-gated — no-op if PDS_ENDPOINT not set)
+  const handle = _handleByDid.get(repoDid);
+  if (handle) mirrorDelete(handle, collection, rkey);
 }
 
 /** Persist a firehose event (fire-and-forget). */
