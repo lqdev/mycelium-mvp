@@ -25,7 +25,8 @@ interface PdsSession {
 
 let _endpoint: string | null = null;
 let _adminPassword: string | null = null;
-let _pdsHostname: string = 'localhost';
+// .localhost is blocked by @atproto/syntax handle validation — use .test instead
+let _pdsHostname: string = 'test';
 
 const _sessions = new Map<string, PdsSession>(); // internal handle → session
 
@@ -45,7 +46,7 @@ export async function initPdsBridge(
   agents: Array<{ handle: string }>,
   endpoint: string,
   adminPassword: string,
-  pdsHostname = 'localhost',
+  pdsHostname = 'test',
 ): Promise<void> {
   _endpoint = endpoint.replace(/\/$/, '');
   _adminPassword = adminPassword;
@@ -161,12 +162,11 @@ async function ensureSession(handle: string): Promise<PdsSession | null> {
   const pdsHandle = toPdsHandle(handle);
   const password = derivePassword(handle);
 
-  // Try to create a new account first (may already exist → fall back to login)
+  // Try login first (handles restarts where account already exists)
   try {
-    const data = await xrpcPostJson('/xrpc/com.atproto.server.createAccount', {
-      handle: pdsHandle,
+    const data = await xrpcPostJson('/xrpc/com.atproto.server.createSession', {
+      identifier: pdsHandle,
       password,
-      email: `${pdsHandle}@mycelium.local`,
     });
     const session: PdsSession = {
       handle,
@@ -178,11 +178,12 @@ async function ensureSession(handle: string): Promise<PdsSession | null> {
     _sessions.set(handle, session);
     return session;
   } catch {
-    // Account likely already exists — try logging in
+    // Account doesn't exist yet — create it
     try {
-      const data = await xrpcPostJson('/xrpc/com.atproto.server.createSession', {
-        identifier: pdsHandle,
+      const data = await xrpcPostJson('/xrpc/com.atproto.server.createAccount', {
+        handle: pdsHandle,
         password,
+        email: `${pdsHandle}@mycelium.local`,
       });
       const session: PdsSession = {
         handle,
@@ -194,7 +195,7 @@ async function ensureSession(handle: string): Promise<PdsSession | null> {
       _sessions.set(handle, session);
       return session;
     } catch (err) {
-      console.error(`[pds-bridge] Cannot create/restore session for ${handle}:`, err);
+      console.error(`[pds-bridge] Cannot create/restore session for ${handle} (pds handle: ${pdsHandle}):`, err);
       return null;
     }
   }
@@ -228,7 +229,8 @@ async function tryRefresh(session: PdsSession): Promise<PdsSession | null> {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/** Convert internal handle (atlas.mycelium.local) to PDS handle (atlas.localhost). */
+/** Convert internal handle (atlas.mycelium.local) to PDS handle (atlas.test).
+ * NOTE: .localhost is blocked by @atproto/syntax — use .test (allowed per spec). */
 function toPdsHandle(handle: string): string {
   const shortName = handle.split('.')[0];
   return `${shortName}.${_pdsHostname}`;

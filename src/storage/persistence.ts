@@ -49,7 +49,7 @@ export function persistRecord(
       );
       await execute(
         conn,
-        `INSERT INTO commits
+        `INSERT OR REPLACE INTO commits
            (repo_did, seq, operation, record_uri, content_hash, repo_root_hash, timestamp)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [repoDid, commit.seq, commit.operation, commit.record_uri, commit.content_hash, commit.repo_root_hash, commit.timestamp],
@@ -86,7 +86,7 @@ export function persistDeleteRecord(
       );
       await execute(
         conn,
-        `INSERT INTO commits
+        `INSERT OR REPLACE INTO commits
            (repo_did, seq, operation, record_uri, content_hash, repo_root_hash, timestamp)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [repoDid, commit.seq, commit.operation, commit.record_uri, commit.content_hash, commit.repo_root_hash, commit.timestamp],

@@ -34,11 +34,15 @@ function createMockPds(): { server: http.Server; requests: CapturedRequest[]; cl
 
       res.setHeader('Content-Type', 'application/json');
 
-      if (req.url?.includes('createAccount') || req.url?.includes('createSession')) {
+      if (req.url?.includes('createSession')) {
+        // Simulate no existing account → 401 so bridge falls back to createAccount
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'AuthenticationRequired', message: 'Invalid identifier or password' }));
+      } else if (req.url?.includes('createAccount')) {
         res.writeHead(200);
         res.end(JSON.stringify({
           did: 'did:plc:testmockabc123',
-          handle: 'atlas.localhost',
+          handle: 'atlas.test',
           accessJwt: 'mock-access-jwt',
           refreshJwt: 'mock-refresh-jwt',
         }));
@@ -117,20 +121,21 @@ describe('initPdsBridge()', () => {
     expect(isPdsBridgeEnabled()).toBe(true);
   });
 
-  it('calls createAccount for each agent', async () => {
+  it('calls createAccount for each agent (when no existing session)', async () => {
     await initPdsBridge(
       [{ handle: 'atlas.mycelium.local' }, { handle: 'beacon.mycelium.local' }],
       `http://127.0.0.1:${port}`,
       'adminpass',
     );
+    // createSession is tried first but returns 401 → falls back to createAccount
     const accountCalls = mock.requests.filter((r) => r.url.includes('createAccount'));
     expect(accountCalls).toHaveLength(2);
   });
 
-  it('sends short handle + localhost to PDS (e.g. atlas.localhost)', async () => {
+  it('sends short handle + .test TLD to PDS (e.g. atlas.test)', async () => {
     await initPdsBridge([{ handle: 'atlas.mycelium.local' }], `http://127.0.0.1:${port}`, 'adminpass');
     const call = mock.requests.find((r) => r.url.includes('createAccount'));
-    expect(call?.body.handle).toBe('atlas.localhost');
+    expect(call?.body.handle).toBe('atlas.test');
   });
 
   it('uses custom pdsHostname when provided', async () => {
@@ -138,10 +143,10 @@ describe('initPdsBridge()', () => {
       [{ handle: 'atlas.mycelium.local' }],
       `http://127.0.0.1:${port}`,
       'adminpass',
-      'mycelium.local',
+      'mycelium.test',
     );
     const call = mock.requests.find((r) => r.url.includes('createAccount'));
-    expect(call?.body.handle).toBe('atlas.mycelium.local');
+    expect(call?.body.handle).toBe('atlas.mycelium.test');
   });
 
   it('derives deterministic password (same inputs → same result)', async () => {
@@ -164,25 +169,19 @@ describe('initPdsBridge()', () => {
     }
   });
 
-  it('falls back to createSession if createAccount returns non-2xx', async () => {
-    // Use a mock that rejects createAccount but accepts createSession
-    const fallbackMock = createMockPds();
-    let createAccountCalled = false;
-    const fallbackServer = http.createServer((req, res) => {
+  it('uses existing session when createSession succeeds (skips createAccount)', async () => {
+    // Mock that accepts createSession directly (simulates account already exists)
+    const existingAccountServer = http.createServer((req, res) => {
       let raw = '';
       req.on('data', (chunk: Buffer) => { raw += chunk.toString(); });
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json');
-        if (req.url?.includes('createAccount')) {
-          createAccountCalled = true;
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: 'HandleNotAvailable', message: 'Handle already taken' }));
-        } else if (req.url?.includes('createSession')) {
+        if (req.url?.includes('createSession')) {
           res.writeHead(200);
           res.end(JSON.stringify({
-            did: 'did:plc:fallback',
-            accessJwt: 'fallback-jwt',
-            refreshJwt: 'fallback-refresh',
+            did: 'did:plc:existing',
+            accessJwt: 'existing-jwt',
+            refreshJwt: 'existing-refresh',
           }));
         } else {
           res.writeHead(404);
@@ -190,15 +189,14 @@ describe('initPdsBridge()', () => {
         }
       });
     });
-    const fbPort = await startServer(fallbackServer);
+    const existPort = await startServer(existingAccountServer);
     try {
       shutdownPdsBridge();
-      await initPdsBridge([{ handle: 'atlas.mycelium.local' }], `http://127.0.0.1:${fbPort}`, 'adminpass');
-      expect(createAccountCalled).toBe(true);
+      await initPdsBridge([{ handle: 'atlas.mycelium.local' }], `http://127.0.0.1:${existPort}`, 'adminpass');
       expect(isPdsBridgeEnabled()).toBe(true);
+      // createAccount was never hit (server would 404 it anyway — session succeeded)
     } finally {
-      await new Promise<void>((r) => fallbackServer.close(() => r()));
-      void fallbackMock;
+      await new Promise<void>((r) => existingAccountServer.close(() => r()));
     }
   });
 });

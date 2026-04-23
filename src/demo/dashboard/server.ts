@@ -102,7 +102,7 @@ async function bootstrapDemo(): Promise<DemoState> {
       agents.map(({ def }) => ({ handle: def.handle })),
       pdsEndpoint,
       pdsAdminPassword,
-      process.env.PDS_HOSTNAME ?? 'localhost',
+      process.env.PDS_HOSTNAME ?? 'test',
     );
   }
 

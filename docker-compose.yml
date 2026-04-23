@@ -18,7 +18,6 @@ services:
       # PDS bridge — enabled when running with --profile pds
       - PDS_ENDPOINT=${PDS_ENDPOINT:-}
       - PDS_ADMIN_PASSWORD=${PDS_ADMIN_PASSWORD:-}
-      - PDS_HOSTNAME=${PDS_HOSTNAME:-localhost}
 
   # ── Local AT Protocol PDS ─────────────────────────────────────────────────
   # Opt-in: docker compose --profile pds up
