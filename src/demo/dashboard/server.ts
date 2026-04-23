@@ -18,6 +18,7 @@ import { createMemoryRepository, listRecords, getRecord } from '../../repository
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
 import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.js';
 import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence } from '../../storage/persistence.js';
+import { getLexicons, getLexicon } from '../../lexicon/index.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -554,6 +555,24 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     return { ...row, content };
   });
 
+  // ── Lexicon endpoints ─────────────────────────────────────────────────────
+
+  // List all network.mycelium.* Lexicons
+  fastify.get('/lexicon', async (_req, reply) => {
+    const list = getLexicons().map(l => ({ id: l.id, description: l.description }));
+    reply.header('Access-Control-Allow-Origin', '*').send(list);
+  });
+
+  // Serve a specific Lexicon by NSID (dots are valid in Fastify params)
+  fastify.get<{ Params: { nsid: string } }>('/lexicon/:nsid', async (req, reply) => {
+    const lex = getLexicon(req.params.nsid);
+    if (!lex) return reply.status(404).send({ error: 'Lexicon not found', nsid: req.params.nsid });
+    reply
+      .header('Content-Type', 'application/json')
+      .header('Access-Control-Allow-Origin', '*')
+      .send(lex);
+  });
+
   // ── SSE endpoint ──────────────────────────────────────────────────────────
 
   fastify.get('/api/events', (req, reply) => {
@@ -602,6 +621,7 @@ async function startServer(state: DemoState, port: number): Promise<void> {
   console.log(`   SSE: http://localhost:${port}/api/events`);
   console.log(`   SQL: http://localhost:${port}/api/sql?q=SELECT+*+FROM+agent_identities`);
   console.log(`   Record: http://localhost:${port}/api/record?uri=at://...`);
+  console.log(`   Lexicons: http://localhost:${port}/lexicon`);
   console.log(`   Export: http://localhost:${port}/api/export/firehose.parquet`);
   console.log(`   DB Stats: http://localhost:${port}/api/db/stats\n`);
 }
