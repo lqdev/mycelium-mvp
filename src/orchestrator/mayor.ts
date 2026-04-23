@@ -119,6 +119,79 @@ export const DASHBOARD_TEMPLATE: DecompositionTemplate = {
   ],
 };
 
+/** Pre-defined decomposition template for "Build the AI Coordination Protocol". */
+export const GATEWAY_TEMPLATE: DecompositionTemplate = {
+  projectPattern: 'Build the AI Coordination Protocol',
+  tasks: [
+    {
+      id: 'gw-001',
+      title: 'Design the coordination API spec',
+      description: 'Define the REST/WebSocket API for inter-agent coordination, including endpoints for task delegation, status polling, and result streaming.',
+      requiredCapabilities: [
+        { domain: 'backend', tags: ['api-design', 'node-js'], minProficiency: 'advanced' },
+      ],
+      complexity: 'high',
+      priority: 'high',
+      dependsOn: [],
+    },
+    {
+      id: 'gw-002',
+      title: 'Implement agent authentication layer',
+      description: 'Build DID-based authentication for agent-to-agent API calls, verifying Ed25519 signatures on each request.',
+      requiredCapabilities: [
+        { domain: 'security', tags: ['authentication', 'backend'], minProficiency: 'advanced' },
+      ],
+      complexity: 'high',
+      priority: 'high',
+      dependsOn: ['gw-001'],
+    },
+    {
+      id: 'gw-003',
+      title: 'Build rate limiting and quotas',
+      description: 'Implement per-agent rate limiting with sliding window counters and configurable quotas for task submissions.',
+      requiredCapabilities: [
+        { domain: 'backend', tags: ['node-js', 'api-design'], minProficiency: 'intermediate' },
+      ],
+      complexity: 'medium',
+      priority: 'normal',
+      dependsOn: ['gw-001'],
+    },
+    {
+      id: 'gw-004',
+      title: 'Design reputation data layer',
+      description: 'Schema and storage layer for cross-Mayor reputation aggregation, including stamp persistence and trust score computation.',
+      requiredCapabilities: [
+        { domain: 'backend', tags: ['api-design', 'node-js'], minProficiency: 'intermediate' },
+      ],
+      complexity: 'medium',
+      priority: 'high',
+      dependsOn: ['gw-001'],
+    },
+    {
+      id: 'gw-005',
+      title: 'Add observability and monitoring',
+      description: 'Instrument the coordination layer with structured logging, metrics endpoints, and health checks.',
+      requiredCapabilities: [
+        { domain: 'devops', tags: ['ci-cd', 'devops'], minProficiency: 'intermediate' },
+      ],
+      complexity: 'low',
+      priority: 'normal',
+      dependsOn: ['gw-002', 'gw-003'],
+    },
+    {
+      id: 'gw-006',
+      title: 'Deploy and integration test',
+      description: 'Deploy the coordination protocol to staging and run end-to-end integration tests across two Mayor instances.',
+      requiredCapabilities: [
+        { domain: 'devops', tags: ['deployment', 'devops'], minProficiency: 'beginner' },
+      ],
+      complexity: 'medium',
+      priority: 'normal',
+      dependsOn: ['gw-004', 'gw-005'],
+    },
+  ],
+};
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**

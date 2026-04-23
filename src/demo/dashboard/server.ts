@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { createFirehose, subscribe, unsubscribe } from '../../firehose/index.js';
 import { bootstrapIntelligence } from '../../intelligence/index.js';
 import { bootstrapAgents, createAgentRunner } from '../../agents/engine.js';
-import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../../orchestrator/mayor.js';
+import { createMayor, DASHBOARD_TEMPLATE, GATEWAY_TEMPLATE, startProject } from '../../orchestrator/mayor.js';
 import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
@@ -24,7 +24,6 @@ import { initJetstream } from '../../atproto/jetstream.js';
 import type {
   AgentCapability,
   AgentProfile,
-  AgentRepository,
   AgentState,
   AggregatedReputation,
   Firehose,
@@ -47,8 +46,7 @@ const PUBLIC_DIR = join(__dirname, 'public');
 
 interface DemoState {
   firehose: Firehose;
-  mayor: Mayor;
-  mayorRepo: AgentRepository;
+  mayors: Mayor[];
   agents: BootstrappedAgent[];
   dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
 }
@@ -79,9 +77,13 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   const intelligence = bootstrapIntelligence(firehose, savedIdentities);
 
-  const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
+  const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor Alpha (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
-  const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+  const mayorAlpha = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+
+  const mayorBetaIdentity = generateIdentity('mayor-beta.mycelium.local', 'Mayor Beta (Orchestrator)');
+  const mayorBetaRepo = createMemoryRepository(mayorBetaIdentity, firehose);
+  const mayorBeta = createMayor(mayorBetaIdentity, mayorBetaRepo, firehose, GATEWAY_TEMPLATE);
 
   const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
 
@@ -135,12 +137,17 @@ async function bootstrapDemo(): Promise<DemoState> {
     }
   }
 
+  const mayorRepos = new Map([
+    [mayorIdentity.did, mayorRepo],
+    [mayorBetaIdentity.did, mayorBetaRepo],
+  ]);
+
   const runners = agents.map(({ def, identity, repo }) =>
-    createAgentRunner(def, identity, repo, mayorRepo, firehose, intelligence, undefined, { forceAccept: true }),
+    createAgentRunner(def, identity, repo, mayorRepos, firehose, intelligence, undefined, { forceAccept: true }),
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, agents, dbInstance };
+  return { firehose, mayors: [mayorAlpha, mayorBeta], agents, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -171,49 +178,55 @@ function buildAgentList(state: DemoState) {
 }
 
 function buildTaskList(state: DemoState) {
-  const tasks: Array<{ id: string; uri: string; status: string; title: string; domain: string; complexity: string; priority: string; assignee?: string }> = [];
+  const tasks: Array<{ id: string; uri: string; status: string; title: string; domain: string; complexity: string; priority: string; assignee?: string; mayorHandle?: string }> = [];
 
-  for (const [id, info] of state.mayor.postedTasks) {
-    const def = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === id);
-    if (!def) continue;
-    let taskStatus = info.status;
-    let assigneeDid: string | undefined;
-    try {
-      const { collection, rkey } = parseAtUri(info.uri);
-      const stored = getRecord(state.mayorRepo, collection, rkey).content as TaskPosting;
-      taskStatus = stored.status;
-      assigneeDid = stored.assigneeDid;
-    } catch {
-      // use info.status
+  for (const mayor of state.mayors) {
+    const mayorHandle = mayor.identity.handle?.split('.')[0] ?? 'mayor';
+
+    for (const [id, info] of mayor.postedTasks) {
+      const def = mayor.template.tasks.find((t) => t.id === id);
+      if (!def) continue;
+      let taskStatus = info.status;
+      let assigneeDid: string | undefined;
+      try {
+        const { collection, rkey } = parseAtUri(info.uri);
+        const stored = getRecord(mayor.repo, collection, rkey).content as TaskPosting;
+        taskStatus = stored.status;
+        assigneeDid = stored.assigneeDid;
+      } catch {
+        // use info.status
+      }
+      const agentEntry = assigneeDid
+        ? state.agents.find((a) => a.identity.did === assigneeDid)
+        : undefined;
+
+      tasks.push({
+        id,
+        uri: info.uri,
+        status: taskStatus,
+        title: def.title,
+        domain: def.requiredCapabilities[0]?.domain ?? 'general',
+        complexity: def.complexity,
+        priority: def.priority,
+        assignee: agentEntry?.def.handle.split('.')[0],
+        mayorHandle,
+      });
     }
-    const agentEntry = assigneeDid
-      ? state.agents.find((a) => a.identity.did === assigneeDid)
-      : undefined;
 
-    tasks.push({
-      id,
-      uri: info.uri,
-      status: taskStatus,
-      title: def.title,
-      domain: def.requiredCapabilities[0]?.domain ?? 'general',
-      complexity: def.complexity,
-      priority: def.priority,
-      assignee: agentEntry?.def.handle.split('.')[0],
-    });
-  }
-
-  // Add un-posted tasks (still gated by dependencies)
-  for (const def of DASHBOARD_TEMPLATE.tasks) {
-    if (state.mayor.postedTasks.has(def.id)) continue;
-    tasks.push({
-      id: def.id,
-      uri: '',
-      status: 'pending',
-      title: def.title,
-      domain: def.requiredCapabilities[0]?.domain ?? 'general',
-      complexity: def.complexity,
-      priority: def.priority,
-    });
+    // Un-posted tasks still gated by dependencies
+    for (const def of mayor.template.tasks) {
+      if (mayor.postedTasks.has(def.id)) continue;
+      tasks.push({
+        id: def.id,
+        uri: '',
+        status: 'pending',
+        title: def.title,
+        domain: def.requiredCapabilities[0]?.domain ?? 'general',
+        complexity: def.complexity,
+        priority: def.priority,
+        mayorHandle,
+      });
+    }
   }
 
   return tasks.sort((a, b) => a.id.localeCompare(b.id));
@@ -263,11 +276,16 @@ function buildAgentDetail(state: DemoState, handle: string) {
     .filter((e) => e.collection === 'network.mycelium.task.completion' && e.did === identity.did)
     .map((e) => {
       const comp = e.record as TaskCompletion;
-      const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => {
-        const info = state.mayor.postedTasks.get(t.id);
-        return info && info.uri === comp.taskUri;
-      });
-      return { uri: `at://${e.did}/${e.collection}/${e.rkey}`, seq: e.seq, timestamp: e.timestamp, taskId: taskDef?.id, taskTitle: taskDef?.title, ...comp };
+      let taskId: string | undefined;
+      let taskTitle: string | undefined;
+      for (const mayor of state.mayors) {
+        const taskDef = mayor.template.tasks.find((t) => {
+          const info = mayor.postedTasks.get(t.id);
+          return info && info.uri === comp.taskUri;
+        });
+        if (taskDef) { taskId = taskDef.id; taskTitle = taskDef.title; break; }
+      }
+      return { uri: `at://${e.did}/${e.collection}/${e.rkey}`, seq: e.seq, timestamp: e.timestamp, taskId, taskTitle, ...comp };
     });
 
   // Roster behavior stats (informational, not secret internals)
@@ -296,19 +314,25 @@ function buildAgentDetail(state: DemoState, handle: string) {
   };
 }
 
-/** Return full detail for a single task by template ID (e.g. "task-003"). */
+/** Return full detail for a single task by template ID (e.g. "task-003" or "gw-002"). */
 function buildTaskDetail(state: DemoState, taskId: string) {
-  const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === taskId);
-  if (!taskDef) return null;
+  // Find which Mayor owns this task (by template definition)
+  let ownerMayor: Mayor | undefined;
+  let taskDef: Mayor['template']['tasks'][0] | undefined;
+  for (const mayor of state.mayors) {
+    const found = mayor.template.tasks.find((t) => t.id === taskId);
+    if (found) { ownerMayor = mayor; taskDef = found; break; }
+  }
+  if (!ownerMayor || !taskDef) return null;
 
-  const info = state.mayor.postedTasks.get(taskId);
+  const info = ownerMayor.postedTasks.get(taskId);
 
   let posting: TaskPosting | null = null;
   let taskUri = info?.uri ?? '';
   if (info) {
     try {
       const { collection, rkey } = parseAtUri(info.uri);
-      posting = getRecord(state.mayorRepo, collection, rkey).content as TaskPosting;
+      posting = getRecord(ownerMayor.repo, collection, rkey).content as TaskPosting;
     } catch { /* not yet posted */ }
   }
 
@@ -359,7 +383,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     : null;
 
   // Rejection history for this task
-  const rejections = (taskUri ? state.mayor.rejectionLog.get(taskUri) : undefined)?.map(
+  const rejections = (taskUri ? ownerMayor.rejectionLog.get(taskUri) : undefined)?.map(
     (r) => ({
       agentDid: r.agentDid,
       agentHandle:
@@ -368,15 +392,15 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     }),
   ) ?? [];
 
-  // Dependency info
+  // Dependency info (from the owning Mayor's template)
   const deps = taskDef.dependsOn.map((depId) => {
-    const depInfo = state.mayor.postedTasks.get(depId);
-    const depDef = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === depId);
+    const depInfo = ownerMayor!.postedTasks.get(depId);
+    const depDef = ownerMayor!.template.tasks.find((t) => t.id === depId);
     return { id: depId, title: depDef?.title ?? depId, status: depInfo?.status ?? 'pending' };
   });
 
-  // What depends on this task
-  const dependents = DASHBOARD_TEMPLATE.tasks
+  // What depends on this task (within same Mayor's template)
+  const dependents = ownerMayor.template.tasks
     .filter((t) => t.dependsOn.includes(taskId))
     .map((t) => ({ id: t.id, title: t.title }));
 
@@ -394,6 +418,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     complexity: taskDef.complexity,
     priority: taskDef.priority,
     status: posting?.status ?? info?.status ?? 'pending',
+    mayorHandle: ownerMayor.identity.handle.split('.')[0],
     assignee: assigneeAgent ? {
       handle: assigneeAgent.def.handle.split('.')[0],
       did: assigneeAgent.identity.did,
@@ -416,12 +441,12 @@ function buildEventDetail(state: DemoState, seq: number) {
   if (!event) return null;
 
   const agent = state.agents.find((a) => a.identity.did === event.did);
-  const isMayor = event.did === state.mayor.identity.did;
+  const mayorEntry = state.mayors.find((m) => m.identity.did === event.did);
 
   return {
     ...event,
-    authorHandle: agent ? agent.def.handle.split('.')[0] : isMayor ? 'mayor' : null,
-    authorDisplayName: agent ? agent.def.displayName : isMayor ? 'Mayor (Orchestrator)' : null,
+    authorHandle: agent ? agent.def.handle.split('.')[0] : mayorEntry ? mayorEntry.identity.handle.split('.')[0] : null,
+    authorDisplayName: agent ? agent.def.displayName : mayorEntry ? mayorEntry.identity.displayName : null,
   };
 }
 
@@ -434,11 +459,16 @@ function buildReputationDetail(state: DemoState, handle: string) {
   const reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
 
   const stampsWithContext = stamps.map((stamp) => {
-    const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => {
-      const info = state.mayor.postedTasks.get(t.id);
-      return info && info.uri === stamp.taskUri;
-    });
-    return { ...stamp, taskId: taskDef?.id ?? null, taskTitle: taskDef?.title ?? null };
+    let taskId: string | null = null;
+    let taskTitle: string | null = null;
+    for (const mayor of state.mayors) {
+      const taskDef = mayor.template.tasks.find((t) => {
+        const info = mayor.postedTasks.get(t.id);
+        return info && info.uri === stamp.taskUri;
+      });
+      if (taskDef) { taskId = taskDef.id; taskTitle = taskDef.title; break; }
+    }
+    return { ...stamp, taskId, taskTitle };
   });
 
   return {
@@ -487,9 +517,9 @@ async function startServer(state: DemoState, port: number): Promise<void> {
   fastify.get('/api/reputation', async () => buildReputationList(state));
 
   fastify.get('/api/status', async () => ({
-    tasksPosted: state.mayor.postedTasks.size,
-    tasksTotal: DASHBOARD_TEMPLATE.tasks.length,
-    tasksAccepted: [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length,
+    tasksPosted: state.mayors.reduce((sum, m) => sum + m.postedTasks.size, 0),
+    tasksTotal: state.mayors.reduce((sum, m) => sum + m.template.tasks.length, 0),
+    tasksAccepted: state.mayors.reduce((sum, m) => sum + [...m.postedTasks.values()].filter((t) => t.status === 'accepted').length, 0),
     firehoseEvents: state.firehose.log.length,
     agents: state.agents.length,
   }));
@@ -708,7 +738,12 @@ process.on('SIGTERM', shutdown);
 
 await startServer(state, CONSTANTS.DASHBOARD_PORT);
 
-// Kick off the demo project after server is ready
-console.log('🎯 Starting project: "Build the Mycelium Dashboard"');
+// Kick off both projects — Mayor Alpha immediately, Mayor Beta with a 5s stagger
+console.log('🎯 Starting project: "Build the Mycelium Dashboard" (Mayor Alpha)');
 console.log('   Watch the real-time stream at http://localhost:3000\n');
-startProject(state.mayor, 'Build the Mycelium Dashboard');
+const [mayorAlpha, mayorBeta] = state.mayors;
+startProject(mayorAlpha, 'Build the Mycelium Dashboard');
+setTimeout(() => {
+  console.log('🎯 Starting project: "Build the AI Coordination Protocol" (Mayor Beta)');
+  startProject(mayorBeta, 'Build the AI Coordination Protocol');
+}, 5000);

@@ -221,7 +221,7 @@ export function createAgentRunner(
   def: AgentDefinition,
   identity: AgentIdentity,
   repo: AgentRepository,
-  mayorRepo: AgentRepository,
+  mayorRepos: Map<string, AgentRepository>,
   firehose: Firehose,
   intelligence: IntelligenceBootstrapResult,
   executionDelayMs?: number,
@@ -333,6 +333,9 @@ export function createAgentRunner(
       if (!tracked) return;
 
       // Transition task to in_progress
+      const taskMayorDid = taskUri.split('/')[2];
+      const mayorRepo = mayorRepos.get(taskMayorDid);
+      if (!mayorRepo) return; // Cross-node task — handled in Phase 13b
       try {
         startTask(mayorRepo, taskUri);
       } catch {
