@@ -75,7 +75,7 @@ cipher   1      83   ⬜ newcomer     gpt-4
 | Layer | Component | MVP Implementation |
 |-------|-----------|-------------------|
 | L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable |
-| L1 | Data Ownership | Per-agent SQLite repos — agents own their records, not orchestrators |
+| L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records, not orchestrators |
 | L2 | Schemas | Zod-validated Lexicon-like records (9 types) |
 | L3 | Federation | In-memory Firehose pub/sub — same semantics as AT Protocol relay |
 | L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted) |
@@ -99,7 +99,8 @@ GitHub Models (cloud)        Ollama (local)
 ```
 src/
   identity/       Ed25519 key generation, DID:key, signing/verification
-  repository/     SQLite-backed record store (one DB per agent)
+  repository/     In-memory record store (one store per agent)
+  storage/        DuckDB connection factory + async persistence layer
   firehose/       In-memory pub/sub event bus
   schemas/        Zod schemas for all 9 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
@@ -116,7 +117,7 @@ src/
 
 ## Key Concepts
 
-**Agent Sovereignty** — Each agent has its own SQLite repo. The Mayor coordinates but never owns agent data. An agent can take its repo (identity + capability records + work history + reputation stamps) to any compatible orchestrator.
+**Agent Sovereignty** — Each agent has its own data store, persisted to DuckDB. The Mayor coordinates but never owns agent data. An agent can export its repo (identity + capability records + work history + reputation stamps) and take it to any compatible orchestrator.
 
 **Wanted Board** — Tasks posted as `task.posting` records in the Mayor's repo. Agents subscribe to the Firehose, evaluate tasks via `shouldClaim()` (domain + proficiency + tag matching), file `task.claim` records in their own repos. The Mayor ranks competing claims by capability fit, reputation, and load, then assigns the best candidate.
 
@@ -154,7 +155,8 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 - Connect to real GitHub Models API (swap mock stubs for HTTP client)
 - Add Ollama HTTP client for local inference
-- Persist Firehose events to SQLite for cross-session replay
+- ~~Persist Firehose events~~ ✅ (DuckDB persistence layer)
+- Parquet export for offline analysis (`/api/export/firehose.parquet`)
 - Agent-to-agent delegation (sub-task spawning)
 - Rework/rejection flow (Mayor rejects poor-quality completions)
 - WebSocket-based Firehose (real network streaming)

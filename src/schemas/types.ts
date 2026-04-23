@@ -2,8 +2,6 @@
 // This is the single source of truth for types — all modules import from here.
 // Zod schemas live in src/schemas/index.ts and mirror these interfaces.
 
-import type { DatabaseSync } from 'node:sqlite';
-
 // ─── Identity ─────────────────────────────────────────────────────────────────
 
 export interface AgentIdentity {
@@ -51,12 +49,38 @@ export interface Firehose {
   subscriptions: Map<string, FirehoseSubscription>;
 }
 
+// ─── Storage ──────────────────────────────────────────────────────────────────
+
+export interface StoredRecordRow {
+  uri: string;
+  collection: string;
+  rkey: string;
+  content: string; // JSON string
+  sig: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommitRow {
+  seq: number;
+  operation: 'create' | 'update' | 'delete';
+  record_uri: string;
+  content_hash: string;
+  repo_root_hash: string;
+  timestamp: string;
+}
+
+export interface InMemoryStore {
+  records: Map<string, StoredRecordRow>;
+  commits: CommitRow[];
+  seq: number;
+}
+
 // ─── Repository ───────────────────────────────────────────────────────────────
 
 export interface AgentRepository {
   did: string;
-  db: DatabaseSync;
-  dbPath: string;        // e.g., "./data/z6MkhaX...doK.db"
+  store: InMemoryStore;
   identity: AgentIdentity;
   firehose: Firehose | null;
 }
@@ -71,14 +95,8 @@ export interface RecordResult {
   };
 }
 
-export interface Commit {
-  seq: number;
-  operation: 'create' | 'update' | 'delete';
-  record_uri: string;
-  content_hash: string;
-  repo_root_hash: string;
-  timestamp: string;
-}
+/** @deprecated Use CommitRow */
+export type Commit = CommitRow;
 
 export interface StoredRecord {
   uri: string;

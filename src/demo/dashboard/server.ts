@@ -7,6 +7,8 @@ import Fastify from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createFirehose, subscribe, unsubscribe } from '../../firehose/index.js';
 import { bootstrapIntelligence } from '../../intelligence/index.js';
 import { bootstrapAgents, createAgentRunner } from '../../agents/engine.js';
@@ -14,6 +16,8 @@ import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../../orchestrato
 import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
+import { createDuckDB, queryAll, execute } from '../../storage/duckdb.js';
+import { initPersistence, loadFirehoseLog, getConn, shutdownPersistence } from '../../storage/persistence.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -43,10 +47,25 @@ interface DemoState {
   mayor: Mayor;
   mayorRepo: AgentRepository;
   agents: BootstrappedAgent[];
+  dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
 }
 
 async function bootstrapDemo(): Promise<DemoState> {
+  // Ensure data directory exists and open DuckDB
+  mkdirSync('./data', { recursive: true });
+  const { instance: dbInstance, conn } = await createDuckDB('./data/mycelium.duckdb');
+  initPersistence(conn);
+
   const firehose = createFirehose();
+
+  // Restore firehose log from DuckDB if available (restart recovery)
+  const savedEvents = await loadFirehoseLog();
+  if (savedEvents.length > 0) {
+    firehose.log.push(...savedEvents);
+    firehose.seq = savedEvents[savedEvents.length - 1].seq + 1;
+    console.log(`[dashboard] Restored ${savedEvents.length} events from DuckDB`);
+  }
+
   const intelligence = bootstrapIntelligence(firehose);
 
   const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
@@ -60,7 +79,7 @@ async function bootstrapDemo(): Promise<DemoState> {
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, agents };
+  return { firehose, mayor, mayorRepo, agents, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -431,6 +450,42 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     return detail;
   });
 
+  // ── Export endpoints ──────────────────────────────────────────────────────
+
+  fastify.get('/api/export/firehose.parquet', async (_req, reply) => {
+    const conn = getConn();
+    if (!conn) return reply.status(503).send({ error: 'Persistence not initialized' });
+
+    const tmpPath = join(tmpdir(), `mycelium-firehose-${Date.now()}.parquet`).replace(/\\/g, '/');
+    try {
+      await execute(conn, `COPY (SELECT * FROM firehose_events ORDER BY seq) TO '${tmpPath}' (FORMAT PARQUET)`);
+      const data = await readFile(tmpPath);
+      return reply
+        .type('application/octet-stream')
+        .header('Content-Disposition', 'attachment; filename="firehose.parquet"')
+        .send(data);
+    } catch (err) {
+      return reply.status(500).send({ error: String(err) });
+    }
+  });
+
+  fastify.get('/api/db/stats', async (_req, reply) => {
+    const conn = getConn();
+    if (!conn) return reply.status(503).send({ error: 'Persistence not initialized' });
+
+    const [records, commits, events] = await Promise.all([
+      queryAll<{ cnt: number }>(conn, 'SELECT COUNT(*) AS cnt FROM records'),
+      queryAll<{ cnt: number }>(conn, 'SELECT COUNT(*) AS cnt FROM commits'),
+      queryAll<{ cnt: number }>(conn, 'SELECT COUNT(*) AS cnt FROM firehose_events'),
+    ]);
+
+    return {
+      records: records[0]?.cnt ?? 0,
+      commits: commits[0]?.cnt ?? 0,
+      firehoseEvents: events[0]?.cnt ?? 0,
+    };
+  });
+
   // ── SSE endpoint ──────────────────────────────────────────────────────────
 
   fastify.get('/api/events', (req, reply) => {
@@ -476,7 +531,9 @@ async function startServer(state: DemoState, port: number): Promise<void> {
   await fastify.listen({ port, host: '0.0.0.0' });
   console.log(`\n🌐 Dashboard: http://localhost:${port}`);
   console.log(`   API: http://localhost:${port}/api/agents`);
-  console.log(`   SSE: http://localhost:${port}/api/events\n`);
+  console.log(`   SSE: http://localhost:${port}/api/events`);
+  console.log(`   Export: http://localhost:${port}/api/export/firehose.parquet`);
+  console.log(`   DB Stats: http://localhost:${port}/api/db/stats\n`);
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -485,6 +542,16 @@ console.log('🍄 Mycelium MVP — Dashboard Server');
 console.log('   Bootstrapping demo state...');
 
 const state = await bootstrapDemo();
+
+// Graceful shutdown: close DuckDB so in-flight async writes can flush
+function shutdown(): void {
+  console.log('\n[dashboard] Shutting down...');
+  shutdownPersistence();
+  state.dbInstance.closeSync();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 await startServer(state, CONSTANTS.DASHBOARD_PORT);
 
