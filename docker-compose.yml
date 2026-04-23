@@ -4,9 +4,8 @@ services:
   # ── Mycelium dashboard ────────────────────────────────────────────────────
   mycelium:
     build: .
-    # DuckDB ships prebuilt linux/amd64 binaries — pin platform to avoid
-    # issues on ARM hosts (e.g. Apple Silicon running Docker Desktop).
-    platform: linux/amd64
+    # NOTE: do NOT pin platform: linux/amd64 — DuckDB ships linux-aarch64 binaries
+    # and forcing amd64 on Apple Silicon causes QEMU segfaults. Build native.
     ports:
       - "3000:3000"
     volumes:
@@ -27,12 +26,12 @@ services:
   # First-time setup:
   #   npm run pds-init        # generates .env.docker with PDS secrets
   #
-  # After Phase 12c is implemented, uncomment PDS_ENDPOINT above so Mycelium
-  # mirrors records to the PDS for real AT Protocol federation.
+  # With PDS running, enable bridge:
+  #   PDS_ENDPOINT=http://pds:2583 PDS_ADMIN_PASSWORD=<from .env.docker> docker compose --profile pds up
   pds:
     image: ghcr.io/bluesky-social/pds:latest
     profiles: ["pds"]
-    platform: linux/amd64
+    # ghcr.io/bluesky-social/pds ships multi-arch (amd64 + arm64) — no platform pin needed
     ports:
       - "2583:2583"
     volumes:
@@ -47,6 +46,9 @@ services:
       - PDS_BSKY_APP_VIEW_URL=
       - PDS_CRAWLERS=
       - PDS_INVITE_REQUIRED=0
+      # PDS_DEV_MODE bypasses the HTTPS requirement for the OAuth subsystem.
+      # Required for local HTTP-only development (PDS 0.4.x+).
+      - PDS_DEV_MODE=true
       - LOG_ENABLED=1
       - LOG_LEVEL=info
 
