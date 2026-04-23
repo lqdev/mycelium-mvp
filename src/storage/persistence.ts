@@ -133,7 +133,7 @@ export function persistFirehoseEvent(event: FirehoseEvent): void {
 export async function loadIdentities(): Promise<Map<string, AgentIdentity>> {
   if (!_conn) return new Map();
   const rows = await queryAll<{
-    handle: string; did: string; display_name: string;
+    handle: string; did: string; plc_did: string | null; display_name: string;
     public_key: string; private_key: string; created_at: string;
   }>(_conn, 'SELECT * FROM agent_identities');
 
@@ -141,6 +141,7 @@ export async function loadIdentities(): Promise<Map<string, AgentIdentity>> {
   for (const row of rows) {
     result.set(row.handle, {
       did: row.did,
+      plcDid: row.plc_did ?? undefined,
       handle: row.handle,
       displayName: row.display_name,
       publicKey: Buffer.from(row.public_key, 'hex'),
@@ -160,11 +161,12 @@ export function saveIdentity(identity: AgentIdentity): void {
       await execute(
         conn,
         `INSERT OR REPLACE INTO agent_identities
-           (handle, did, display_name, public_key, private_key, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+           (handle, did, plc_did, display_name, public_key, private_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           identity.handle,
           identity.did,
+          identity.plcDid ?? null,
           identity.displayName,
           Buffer.from(identity.publicKey).toString('hex'),
           Buffer.from(identity.privateKey).toString('hex'),

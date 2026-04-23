@@ -5,7 +5,8 @@
 // ─── Identity ─────────────────────────────────────────────────────────────────
 
 export interface AgentIdentity {
-  did: string;            // e.g., "did:key:z6Mkr..."
+  did: string;            // e.g., "did:key:z6Mkr..." — signing key; used for internal firehose + AT URIs
+  plcDid?: string;        // e.g., "did:plc:abc123" — PDS-assigned DID; used for external PDS/Jetstream routing
   handle: string;         // e.g., "atlas.mycelium.local"
   displayName: string;    // e.g., "Atlas (Frontend Specialist)"
   publicKey: Uint8Array;

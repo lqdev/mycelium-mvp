@@ -121,6 +121,19 @@ describe('initPdsBridge()', () => {
     expect(isPdsBridgeEnabled()).toBe(true);
   });
 
+  it('returns a Map of handle → did:plc for each agent', async () => {
+    const result = await initPdsBridge(
+      [{ handle: 'atlas.mycelium.local' }, { handle: 'beacon.mycelium.local' }],
+      `http://127.0.0.1:${port}`,
+      'adminpass',
+    );
+    expect(result).toBeInstanceOf(Map);
+    expect(result.size).toBe(2);
+    // mock server returns did:plc:testmockabc123 for every account
+    expect(result.get('atlas.mycelium.local')).toBe('did:plc:testmockabc123');
+    expect(result.get('beacon.mycelium.local')).toBe('did:plc:testmockabc123');
+  });
+
   it('calls createAccount for each agent (when no existing session)', async () => {
     await initPdsBridge(
       [{ handle: 'atlas.mycelium.local' }, { handle: 'beacon.mycelium.local' }],

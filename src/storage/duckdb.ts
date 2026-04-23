@@ -51,11 +51,15 @@ const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS agent_identities (
     handle       VARCHAR PRIMARY KEY,
     did          VARCHAR NOT NULL,
+    plc_did      VARCHAR,
     display_name VARCHAR NOT NULL,
     public_key   VARCHAR NOT NULL,
     private_key  VARCHAR NOT NULL,
     created_at   VARCHAR NOT NULL
   );
+
+  -- Idempotent migration: add plc_did to pre-existing databases
+  ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS plc_did VARCHAR;
 `;
 
 /**

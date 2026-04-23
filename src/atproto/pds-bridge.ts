@@ -41,23 +41,29 @@ export function isPdsBridgeEnabled(): boolean {
  * Initialise the bridge and create/restore PDS accounts for all agents.
  * Call once at server startup if PDS_ENDPOINT is set.
  * Safe to call multiple times (idempotent).
+ * Returns a map of internal handle → did:plc for the caller to persist.
  */
 export async function initPdsBridge(
   agents: Array<{ handle: string }>,
   endpoint: string,
   adminPassword: string,
   pdsHostname = 'test',
-): Promise<void> {
+): Promise<Map<string, string>> {
   _endpoint = endpoint.replace(/\/$/, '');
   _adminPassword = adminPassword;
   _pdsHostname = pdsHostname;
 
+  const plcDids = new Map<string, string>();
   let successCount = 0;
   for (const agent of agents) {
     const session = await ensureSession(agent.handle);
-    if (session) successCount++;
+    if (session) {
+      plcDids.set(agent.handle, session.pdsDid);
+      successCount++;
+    }
   }
   console.log(`[pds-bridge] Connected to ${_endpoint} — ${successCount}/${agents.length} agent sessions ready`);
+  return plcDids;
 }
 
 /** Reset bridge state (for tests or clean shutdown). */

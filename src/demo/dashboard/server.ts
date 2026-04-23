@@ -84,8 +84,8 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
 
-  // Persist any newly generated identities (fire-and-forget)
-  for (const id of [...intelligence.newIdentities, ...newAgentIdentities]) {
+  // Save non-agent new identities (mayor, intelligence) — no PDS accounts, safe to save now
+  for (const id of intelligence.newIdentities) {
     saveIdentity(id);
   }
 
@@ -94,16 +94,35 @@ async function bootstrapDemo(): Promise<DemoState> {
     registerAgentMapping(identity.did, def.handle);
   }
 
-  // Init PDS bridge if configured (env-gated; no-op when PDS_ENDPOINT is not set)
+  // Init PDS bridge if configured (env-gated; no-op when PDS_ENDPOINT is not set).
+  // Bridge init happens BEFORE saving agent identities so plcDid is set on first save (no double-save race).
   const pdsEndpoint = process.env.PDS_ENDPOINT;
   const pdsAdminPassword = process.env.PDS_ADMIN_PASSWORD;
   if (pdsEndpoint && pdsAdminPassword) {
-    await initPdsBridge(
+    const plcDids = await initPdsBridge(
       agents.map(({ def }) => ({ handle: def.handle })),
       pdsEndpoint,
       pdsAdminPassword,
       process.env.PDS_HOSTNAME ?? 'test',
     );
+    // Apply PDS-assigned did:plc to each agent identity (bridge is authoritative)
+    for (const { def, identity } of agents) {
+      const plcDid = plcDids.get(def.handle);
+      if (plcDid && plcDid !== identity.plcDid) {
+        identity.plcDid = plcDid;
+      }
+    }
+  }
+
+  // Save new agent identities with plcDid already populated (single save, no race)
+  for (const id of newAgentIdentities) {
+    saveIdentity(id);
+  }
+  // Save existing agent identities if their plcDid changed (first PDS run, or PDS wiped/recreated)
+  for (const { def, identity } of agents) {
+    if (identity.plcDid && identity.plcDid !== savedIdentities?.get(def.handle)?.plcDid) {
+      saveIdentity(identity);
+    }
   }
 
   const runners = agents.map(({ def, identity, repo }) =>

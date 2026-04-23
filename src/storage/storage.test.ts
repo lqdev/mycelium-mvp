@@ -520,6 +520,28 @@ describe('loadIdentities() / saveIdentity()', () => {
     expect(saved!.handle).toBe(identity.handle);
     expect(saved!.displayName).toBe(identity.displayName);
     expect(saved!.createdAt).toBe(identity.createdAt);
+    expect(saved!.plcDid).toBeUndefined();
+  });
+
+  it('round-trips plcDid when set', async () => {
+    const identity = makeIdentity({ plcDid: 'did:plc:testplcabc123' });
+    saveIdentity(identity);
+    await flush();
+
+    const loaded = await loadIdentities();
+    expect(loaded.get(identity.handle)?.plcDid).toBe('did:plc:testplcabc123');
+  });
+
+  it('preserves plcDid through upsert (second save with plcDid set)', async () => {
+    const identity = makeIdentity();
+    saveIdentity(identity);
+    await flush();
+    identity.plcDid = 'did:plc:updatedplc456';
+    saveIdentity(identity);
+    await flush();
+
+    const loaded = await loadIdentities();
+    expect(loaded.get(identity.handle)?.plcDid).toBe('did:plc:updatedplc456');
   });
 
   it('preserves public and private key bytes across round-trip', async () => {
