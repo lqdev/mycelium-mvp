@@ -332,15 +332,18 @@ export function createAgentRunner(
       const tracked = claimTracker.get(taskUri);
       if (!tracked) return;
 
-      // Transition task to in_progress
+      // Transition task to in_progress (local Mayor only — cross-node tasks skip this)
       const taskMayorDid = taskUri.split('/')[2];
       const mayorRepo = mayorRepos.get(taskMayorDid);
-      if (!mayorRepo) return; // Cross-node task — handled in Phase 13b
-      try {
-        startTask(mayorRepo, taskUri);
-      } catch {
-        return; // Task may have been transitioned already
+      if (mayorRepo) {
+        try {
+          startTask(mayorRepo, taskUri);
+        } catch {
+          return; // Transition conflict — task already moved past 'assigned'
+        }
       }
+      // For cross-node tasks (mayorRepo not in map), skip startTask but still execute.
+      // The remote Mayor's state machine allows assigned → completed directly.
 
       updateAgentStateAdd(repo, taskUri, tracked.claimUri);
 

@@ -60,6 +60,12 @@ const SCHEMA_SQL = `
 
   -- Idempotent migration: add plc_did to pre-existing databases
   ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS plc_did VARCHAR;
+
+  CREATE TABLE IF NOT EXISTS jetstream_cursors (
+    endpoint   VARCHAR PRIMARY KEY,
+    cursor_us  BIGINT  NOT NULL,
+    updated_at VARCHAR NOT NULL
+  );
 `;
 
 /**

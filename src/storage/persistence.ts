@@ -205,3 +205,32 @@ export async function loadFirehoseLog(): Promise<FirehoseEvent[]> {
 export function getConn(): DuckDBConnection | null {
   return _conn;
 }
+
+// ─── Jetstream cursor ─────────────────────────────────────────────────────────
+
+/** Persist the latest Jetstream cursor for an endpoint (fire-and-forget). */
+export function saveJetstreamCursor(endpoint: string, timeUs: number): void {
+  if (!_conn) return;
+  const conn = _conn;
+  void (async () => {
+    try {
+      await execute(
+        conn,
+        `INSERT OR REPLACE INTO jetstream_cursors (endpoint, cursor_us, updated_at) VALUES ($1, $2, $3)`,
+        [endpoint, timeUs, new Date().toISOString()],
+      );
+    } catch (err) {
+      console.error('[persistence] cursor save failed:', err);
+    }
+  })();
+}
+
+/** Load the last known Jetstream cursor for an endpoint. Returns null if not found. */
+export async function loadJetstreamCursor(endpoint: string): Promise<number | null> {
+  if (!_conn) return null;
+  const row = await queryOne<{ cursor_us: number }>(_conn,
+    'SELECT cursor_us FROM jetstream_cursors WHERE endpoint = $1',
+    [endpoint],
+  );
+  return row ? Number(row.cursor_us) : null;
+}

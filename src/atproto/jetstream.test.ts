@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WebSocketServer } from 'ws';
 import type { WebSocket as WsSocket } from 'ws';
+import type { IncomingMessage } from 'node:http';
 import { createFirehose } from '../firehose/index.js';
 import { initJetstream, shutdownJetstream, isJetstreamEnabled } from './jetstream.js';
 import type { Firehose } from '../schemas/types.js';
@@ -63,6 +64,24 @@ function waitForEvents(firehose: Firehose, count: number, timeoutMs = 2000): Pro
       clearInterval(interval);
       reject(new Error(`Timeout: expected ${count} events, got ${firehose.log.length}`));
     }, timeoutMs);
+  });
+}
+
+/** Start a WebSocket server that also captures the URL of the last connection request. */
+function startWssCapturingUrl(): Promise<{ wss: WebSocketServer; port: number; clients: WsSocket[]; getLastUrl: () => string }> {
+  return new Promise((resolve) => {
+    const clients: WsSocket[] = [];
+    let lastUrl = '';
+    const wss = new WebSocketServer({ port: 0 });
+    wss.on('connection', (ws: WsSocket, req: IncomingMessage) => {
+      lastUrl = req.url ?? '';
+      clients.push(ws);
+      ws.on('close', () => clients.splice(clients.indexOf(ws), 1));
+    });
+    wss.on('listening', () => {
+      const addr = wss.address() as { port: number };
+      resolve({ wss, port: addr.port, clients, getLastUrl: () => lastUrl });
+    });
   });
 }
 
@@ -273,5 +292,77 @@ describe('shutdownJetstream()', () => {
 
     expect(firehose.log).toHaveLength(0);
     await closeWss(wss);
+  });
+});
+
+describe('initJetstream() — cursor', () => {
+  afterEach(() => shutdownJetstream());
+
+  it('appends ?cursor=N to the WebSocket URL when cursor is provided', async () => {
+    const { wss, port, getLastUrl } = await startWssCapturingUrl();
+    try {
+      const firehose = createFirehose();
+      initJetstream(`ws://127.0.0.1:${port}/subscribe`, firehose, new Set(), 1_700_000_000_000_000);
+      await sleep(100);
+      expect(getLastUrl()).toBe('/subscribe?cursor=1700000000000000');
+    } finally {
+      shutdownJetstream();
+      await closeWss(wss);
+    }
+  });
+
+  it('does not append cursor param when no cursor provided', async () => {
+    const { wss, port, getLastUrl } = await startWssCapturingUrl();
+    try {
+      const firehose = createFirehose();
+      initJetstream(`ws://127.0.0.1:${port}/subscribe`, firehose, new Set());
+      await sleep(100);
+      expect(getLastUrl()).toBe('/subscribe');
+    } finally {
+      shutdownJetstream();
+      await closeWss(wss);
+    }
+  });
+
+  it('calls onCursor callback with time_us after each bridged event', async () => {
+    const { wss, port, clients } = await startWss();
+    const cursors: number[] = [];
+    const firehose = createFirehose();
+    const time_us = 1_700_000_000_000_000;
+
+    initJetstream(`ws://127.0.0.1:${port}`, firehose, new Set(), undefined, (t) => cursors.push(t));
+    try {
+      await sleep(100);
+      clients[0].send(makeJetstreamEvent({ time_us }));
+      clients[0].send(makeJetstreamEvent({ time_us: time_us + 1_000_000 }));
+      await waitForEvents(firehose, 2);
+
+      expect(cursors).toHaveLength(2);
+      expect(cursors[0]).toBe(time_us);
+      expect(cursors[1]).toBe(time_us + 1_000_000);
+    } finally {
+      shutdownJetstream();
+      await closeWss(wss);
+    }
+  });
+
+  it('does not call onCursor for filtered events (local DID or wrong collection)', async () => {
+    const { wss, port, clients } = await startWss();
+    const cursors: number[] = [];
+    const firehose = createFirehose();
+    const localPlcDids = new Set(['did:plc:local']);
+
+    initJetstream(`ws://127.0.0.1:${port}`, firehose, localPlcDids, undefined, (t) => cursors.push(t));
+    try {
+      await sleep(100);
+      clients[0]?.send(makeJetstreamEvent({ did: 'did:plc:local' })); // filtered — local DID
+      clients[0]?.send(makeJetstreamEvent({ collection: 'app.bsky.feed.post' })); // filtered — wrong collection
+      await sleep(150);
+
+      expect(cursors).toHaveLength(0);
+    } finally {
+      shutdownJetstream();
+      await closeWss(wss);
+    }
   });
 });

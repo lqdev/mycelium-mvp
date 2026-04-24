@@ -17,7 +17,7 @@ import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
 import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.js';
-import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence, registerAgentMapping } from '../../storage/persistence.js';
+import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence, registerAgentMapping, loadJetstreamCursor, saveJetstreamCursor } from '../../storage/persistence.js';
 import { getLexicons, getLexicon } from '../../lexicon/index.js';
 import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
 import { initJetstream } from '../../atproto/jetstream.js';
@@ -121,9 +121,18 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   // Init Jetstream federation consumer if configured (env-gated).
   // localPlcDids prevents re-broadcasting our own events back into the firehose.
+  // On first connect (no cursor in DB): live tail only (safe, no replay side-effects).
+  // On restart (cursor in DB): delta replay from last seen position.
   const jetstreamEndpoint = process.env.JETSTREAM_ENDPOINT;
   if (jetstreamEndpoint) {
-    initJetstream(jetstreamEndpoint, firehose, localPlcDids);
+    const savedCursor = await loadJetstreamCursor(jetstreamEndpoint);
+    initJetstream(
+      jetstreamEndpoint,
+      firehose,
+      localPlcDids,
+      savedCursor ?? undefined,
+      (timeUs) => saveJetstreamCursor(jetstreamEndpoint, timeUs),
+    );
   }
 
   // Save new agent identities with plcDid already populated (single save, no race)

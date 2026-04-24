@@ -34,7 +34,9 @@ export type CompletionResults = {
 const VALID_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   open: ['claimed'],
   claimed: ['assigned', 'open'],
-  assigned: ['in_progress'],
+  // 'completed' is also valid from 'assigned' for cross-node federation: a remote agent
+  // may complete without a local startTask() (no Mayor repo access across nodes).
+  assigned: ['in_progress', 'completed'],
   in_progress: ['completed'],
   completed: ['accepted', 'open'],
   accepted: ['closed'],

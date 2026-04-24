@@ -43,6 +43,8 @@ let _reconnectMs = MIN_RECONNECT_MS;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _shuttingDown = false;
 let _ws: WebSocket | null = null;
+let _cursor: number | undefined;
+let _onCursor: ((timeUs: number) => void) | null = null;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -58,15 +60,24 @@ export function isJetstreamEnabled(): boolean {
  * @param endpoint   - WebSocket URL (e.g. "ws://localhost:6008/subscribe")
  * @param firehose   - the local in-process firehose to publish into
  * @param localPlcDids - set of did:plc values for local agents (loop prevention)
+ * @param cursor     - optional start cursor (time_us). When provided, appended as
+ *                     `?cursor=N` — pass a previously-saved value for delta replay
+ *                     after a process restart. Omit for live-tail on first connect.
+ * @param onCursor   - optional callback invoked with each event's time_us so the
+ *                     caller can persist the cursor for restart resilience.
  */
 export function initJetstream(
   endpoint: string,
   firehose: Firehose,
   localPlcDids: Set<string>,
+  cursor?: number,
+  onCursor?: (timeUs: number) => void,
 ): void {
   _endpoint = endpoint;
   _firehose = firehose;
   _localPlcDids = localPlcDids;
+  _cursor = cursor;
+  _onCursor = onCursor ?? null;
   _shuttingDown = false;
   _reconnectMs = MIN_RECONNECT_MS;
   console.log(`[jetstream] Connecting to ${endpoint}`);
@@ -86,6 +97,8 @@ export function shutdownJetstream(): void {
   _firehose = null;
   _localPlcDids = new Set();
   _reconnectMs = MIN_RECONNECT_MS;
+  _cursor = undefined;
+  _onCursor = null;
 }
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
@@ -93,7 +106,9 @@ export function shutdownJetstream(): void {
 function connect(): void {
   if (!_endpoint || _shuttingDown) return;
 
-  const ws = new WebSocket(_endpoint);
+  // Append cursor param for delta replay (set from a prior session or after each event)
+  const url = _cursor !== undefined ? `${_endpoint}?cursor=${_cursor}` : _endpoint;
+  const ws = new WebSocket(url);
   _ws = ws;
 
   ws.addEventListener('open', () => {
@@ -144,6 +159,10 @@ function handleMessage(raw: string, firehose: Firehose): void {
   };
 
   publish(firehose, event);
+
+  // Advance cursor in memory (for reconnect within same session) and notify caller
+  _cursor = data.time_us;
+  _onCursor?.(data.time_us);
 }
 
 function scheduleReconnect(): void {

@@ -73,6 +73,7 @@ Each level builds on the previous. Level 0 works out of the box.
 | **1b — Local LLM** | `MYCELIUM_ENABLE_INFERENCE=true LOCAL_ONLY_MODEL=qwen2.5:7b npm run demo` | Ollama installed |
 | **2 — Persistent** | `npm run demo` *(after first run)* | Nothing extra — DIDs persist via DuckDB |
 | **3 — Docker** | `docker compose up` | Docker |
+| **4 — Federation** | `docker compose -f docker-compose.federation.yml up` | Docker + two PDS env files |
 
 Copy `.env.example` to `.env` and uncomment variables as needed.
 
@@ -160,6 +161,34 @@ After running with `--profile pds`, you can inspect agent records directly:
 # List records for an agent
 curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collection=network.mycelium.task.posting"
 ```
+
+### Level 4 — Two-Node Federation
+
+Spin up two fully independent Mycelium nodes. Each node has its own Mayor, PDS, and Jetstream relay. Agents from Node B can claim and execute tasks posted by Node A's Mayor, and vice versa. Cursor persistence ensures each node resumes from its last known Jetstream position after a restart.
+
+```bash
+# Generate secrets for both nodes (run once per node)
+npm run pds-init && mv .env.docker .env.docker.a
+npm run pds-init && mv .env.docker .env.docker.b
+
+# Extract admin passwords
+# bash:
+export PDS_A_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.a | cut -d= -f2)
+export PDS_B_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.b | cut -d= -f2)
+
+# PowerShell:
+# $env:PDS_A_ADMIN_PASSWORD = (Get-Content .env.docker.a | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+# $env:PDS_B_ADMIN_PASSWORD = (Get-Content .env.docker.b | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+
+# Start both nodes
+docker compose -f docker-compose.federation.yml up
+```
+
+Dashboards:
+- **Node A** (Mayor Alpha — Build the Mycelium Dashboard): http://localhost:3000
+- **Node B** (Mayor Beta — Build the AI Coordination Protocol): http://localhost:3001
+
+> **Known limitations (MVP)**: Mayor records are not yet mirrored to the PDS, so only agent-authored records (claims, completions) travel cross-node via Jetstream. Full Mayor ↔ Mayor federation (cross-node task posting) requires Phase 14 work.
 
 ---
 
@@ -289,4 +318,4 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 ## What's Next
 
 - **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client
-- **Phase 13** — Multi-orchestrator federation: Mayors on separate PDSs, agents moving between them, tasks delegating across orchestrator boundaries
+- **Phase 14** — Full Mayor ↔ Mayor federation: mirror Mayor repos to PDS so task postings travel cross-node via Jetstream without requiring shared process state

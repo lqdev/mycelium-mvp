@@ -1,0 +1,139 @@
+version: '3.8'
+
+# ─── Two-Node Mycelium Federation ─────────────────────────────────────────────
+#
+# Runs two independent Mycelium+PDS+Jetstream stacks on the same machine.
+# Each node's agents can see and claim tasks posted by the other node's Mayor.
+#
+# Topology:
+#   Node A (Mayor Alpha — Dashboard)  → jetstream-a → consumed by mycelium-b
+#   Node B (Mayor Beta — Gateway API) → jetstream-b → consumed by mycelium-a
+#
+# Prerequisites:
+#   npm run pds-init && mv .env.docker .env.docker.a
+#   npm run pds-init && mv .env.docker .env.docker.b
+#
+# Extract passwords (bash):
+#   export PDS_A_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.a | cut -d= -f2)
+#   export PDS_B_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.b | cut -d= -f2)
+#
+# Extract passwords (PowerShell):
+#   $env:PDS_A_ADMIN_PASSWORD = (Get-Content .env.docker.a | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+#   $env:PDS_B_ADMIN_PASSWORD = (Get-Content .env.docker.b | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+#
+# Run:
+#   docker compose -f docker-compose.federation.yml up
+#
+# Dashboards:
+#   Node A: http://localhost:3000
+#   Node B: http://localhost:3001
+
+services:
+
+  # ── Node A ─────────────────────────────────────────────────────────────────
+
+  mycelium-a:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - mycelium-a-data:/app/data
+    depends_on:
+      - pds-a
+      - jetstream-b  # wait for Node B's Jetstream before subscribing
+    environment:
+      - MYCELIUM_ENABLE_INFERENCE=${MYCELIUM_ENABLE_INFERENCE:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - LOCAL_ONLY_MODEL=${LOCAL_ONLY_MODEL:-}
+      - PDS_ENDPOINT=http://pds-a:2583
+      - PDS_ADMIN_PASSWORD=${PDS_A_ADMIN_PASSWORD:-}
+      # Subscribe to Node B's Jetstream — receives Node B agent events
+      - JETSTREAM_ENDPOINT=ws://jetstream-b:6009/subscribe
+
+  pds-a:
+    image: ghcr.io/bluesky-social/pds:latest
+    ports:
+      - "2583:2583"
+    volumes:
+      - pds-a-data:/pds
+    env_file: .env.docker.a
+    environment:
+      - PDS_HOSTNAME=localhost
+      - PDS_PORT=2583
+      - PDS_DATA_DIRECTORY=/pds
+      - PDS_BLOBSTORE_DISK_LOCATION=/pds/blobs
+      - PDS_DID_PLC_URL=https://plc.directory
+      - PDS_BSKY_APP_VIEW_URL=
+      - PDS_CRAWLERS=
+      - PDS_INVITE_REQUIRED=0
+      - PDS_DEV_MODE=true
+      - LOG_ENABLED=1
+      - LOG_LEVEL=info
+
+  jetstream-a:
+    image: ghcr.io/bluesky-social/jetstream:latest
+    ports:
+      - "6008:6008"
+    depends_on:
+      - pds-a
+    environment:
+      # Reads from Node A's PDS — streams Node A events out on :6008
+      - JETSTREAM_WEBSOCKET_URLS=ws://pds-a:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_LISTEN_ADDR=:6008
+
+  # ── Node B ─────────────────────────────────────────────────────────────────
+
+  mycelium-b:
+    build: .
+    ports:
+      - "3001:3000"  # internal port is 3000; exposed on host as 3001
+    volumes:
+      - mycelium-b-data:/app/data
+    depends_on:
+      - pds-b
+      - jetstream-a  # wait for Node A's Jetstream before subscribing
+    environment:
+      - MYCELIUM_ENABLE_INFERENCE=${MYCELIUM_ENABLE_INFERENCE:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - LOCAL_ONLY_MODEL=${LOCAL_ONLY_MODEL:-}
+      - PDS_ENDPOINT=http://pds-b:2583
+      - PDS_ADMIN_PASSWORD=${PDS_B_ADMIN_PASSWORD:-}
+      # Subscribe to Node A's Jetstream — receives Node A Mayor task postings + assignments
+      - JETSTREAM_ENDPOINT=ws://jetstream-a:6008/subscribe
+
+  pds-b:
+    image: ghcr.io/bluesky-social/pds:latest
+    ports:
+      - "2584:2583"  # internal port is 2583; exposed on host as 2584
+    volumes:
+      - pds-b-data:/pds
+    env_file: .env.docker.b
+    environment:
+      - PDS_HOSTNAME=localhost
+      - PDS_PORT=2583
+      - PDS_DATA_DIRECTORY=/pds
+      - PDS_BLOBSTORE_DISK_LOCATION=/pds/blobs
+      - PDS_DID_PLC_URL=https://plc.directory
+      - PDS_BSKY_APP_VIEW_URL=
+      - PDS_CRAWLERS=
+      - PDS_INVITE_REQUIRED=0
+      - PDS_DEV_MODE=true
+      - LOG_ENABLED=1
+      - LOG_LEVEL=info
+
+  jetstream-b:
+    image: ghcr.io/bluesky-social/jetstream:latest
+    ports:
+      - "6009:6009"
+    depends_on:
+      - pds-b
+    environment:
+      # Reads from Node B's PDS — streams Node B events out on :6009
+      - JETSTREAM_WEBSOCKET_URLS=ws://pds-b:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_LISTEN_ADDR=:6009
+
+volumes:
+  mycelium-a-data:
+  pds-a-data:
+  mycelium-b-data:
+  pds-b-data:
