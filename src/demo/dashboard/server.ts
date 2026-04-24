@@ -77,17 +77,19 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   const intelligence = bootstrapIntelligence(firehose, savedIdentities);
 
-  const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor Alpha (Orchestrator)');
+  const savedMayorIdentity = savedIdentities.get('mayor.mycelium.local');
+  const mayorIdentity = savedMayorIdentity ?? generateIdentity('mayor.mycelium.local', 'Mayor Alpha (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
   const mayorAlpha = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
 
-  const mayorBetaIdentity = generateIdentity('mayor-beta.mycelium.local', 'Mayor Beta (Orchestrator)');
+  const savedMayorBetaIdentity = savedIdentities.get('mayor-beta.mycelium.local');
+  const mayorBetaIdentity = savedMayorBetaIdentity ?? generateIdentity('mayor-beta.mycelium.local', 'Mayor Beta (Orchestrator)');
   const mayorBetaRepo = createMemoryRepository(mayorBetaIdentity, firehose);
   const mayorBeta = createMayor(mayorBetaIdentity, mayorBetaRepo, firehose, GATEWAY_TEMPLATE);
 
   const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
 
-  // Save non-agent new identities (mayor, intelligence) — no PDS accounts, safe to save now
+  // Save intelligence provider identities (no PDS accounts, safe to save now)
   for (const id of intelligence.newIdentities) {
     saveIdentity(id);
   }
@@ -96,27 +98,42 @@ async function bootstrapDemo(): Promise<DemoState> {
   for (const { def, identity } of agents) {
     registerAgentMapping(identity.did, def.handle);
   }
+  // Mayors get PDS accounts in Phase 14 — register their DIDs too
+  registerAgentMapping(mayorIdentity.did, mayorIdentity.handle);
+  registerAgentMapping(mayorBetaIdentity.did, mayorBetaIdentity.handle);
 
   // Init PDS bridge if configured (env-gated; no-op when PDS_ENDPOINT is not set).
   // Bridge init happens BEFORE saving agent identities so plcDid is set on first save (no double-save race).
+  // localPlcDids is passed as a mutable Set so the bridge can add Mayor plcDids even on lazy-established sessions,
+  // preventing Jetstream echo loops where our own Mayor events re-enter the local firehose.
   const pdsEndpoint = process.env.PDS_ENDPOINT;
   const pdsAdminPassword = process.env.PDS_ADMIN_PASSWORD;
-  let localPlcDids = new Set<string>();
+  const localPlcDids = new Set<string>();
   if (pdsEndpoint && pdsAdminPassword) {
+    const pdsAgents = [
+      ...agents.map(({ def }) => ({ handle: def.handle })),
+      { handle: mayorIdentity.handle },
+      { handle: mayorBetaIdentity.handle },
+    ];
     const plcDids = await initPdsBridge(
-      agents.map(({ def }) => ({ handle: def.handle })),
+      pdsAgents,
       pdsEndpoint,
       pdsAdminPassword,
       process.env.PDS_HOSTNAME ?? 'test',
+      localPlcDids,
     );
-    // Apply PDS-assigned did:plc to each agent identity (bridge is authoritative)
+    // Apply PDS-assigned did:plc to agent identities (bridge is authoritative)
     for (const { def, identity } of agents) {
       const plcDid = plcDids.get(def.handle);
-      if (plcDid && plcDid !== identity.plcDid) {
-        identity.plcDid = plcDid;
-      }
+      if (plcDid && plcDid !== identity.plcDid) identity.plcDid = plcDid;
     }
-    localPlcDids = new Set(plcDids.values());
+    // Apply PDS-assigned did:plc to Mayor identities
+    for (const identity of [mayorIdentity, mayorBetaIdentity]) {
+      const plcDid = plcDids.get(identity.handle);
+      if (plcDid && plcDid !== identity.plcDid) identity.plcDid = plcDid;
+    }
+    // Populate localPlcDids from all registered handles (bridge also keeps it current on lazy sessions)
+    for (const plcDid of plcDids.values()) localPlcDids.add(plcDid);
   }
 
   // Init Jetstream federation consumer if configured (env-gated).
@@ -142,6 +159,15 @@ async function bootstrapDemo(): Promise<DemoState> {
   // Save existing agent identities if their plcDid changed (first PDS run, or PDS wiped/recreated)
   for (const { def, identity } of agents) {
     if (identity.plcDid && identity.plcDid !== savedIdentities?.get(def.handle)?.plcDid) {
+      saveIdentity(identity);
+    }
+  }
+  // Save Mayor identities — new on first run, updated if plcDid changed
+  for (const { identity, saved } of [
+    { identity: mayorIdentity, saved: savedMayorIdentity },
+    { identity: mayorBetaIdentity, saved: savedMayorBetaIdentity },
+  ]) {
+    if (!saved || (identity.plcDid && identity.plcDid !== saved.plcDid)) {
       saveIdentity(identity);
     }
   }

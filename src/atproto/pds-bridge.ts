@@ -30,6 +30,11 @@ let _pdsHostname: string = 'test';
 
 const _sessions = new Map<string, PdsSession>(); // internal handle → session
 
+// When set, every successfully established session adds its pdsDid here.
+// Passed in from server.ts so the Jetstream filter stays current even when
+// sessions are established lazily (after initPdsBridge returns).
+let _localPlcDids: Set<string> | null = null;
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /** Returns true when the bridge is configured and ready. */
@@ -48,10 +53,12 @@ export async function initPdsBridge(
   endpoint: string,
   adminPassword: string,
   pdsHostname = 'test',
+  localPlcDids?: Set<string>,
 ): Promise<Map<string, string>> {
   _endpoint = endpoint.replace(/\/$/, '');
   _adminPassword = adminPassword;
   _pdsHostname = pdsHostname;
+  _localPlcDids = localPlcDids ?? null;
 
   const plcDids = new Map<string, string>();
   let successCount = 0;
@@ -70,6 +77,7 @@ export async function initPdsBridge(
 export function shutdownPdsBridge(): void {
   _endpoint = null;
   _adminPassword = null;
+  _localPlcDids = null;
   _sessions.clear();
 }
 
@@ -182,6 +190,7 @@ async function ensureSession(handle: string): Promise<PdsSession | null> {
       refreshJwt: data.refreshJwt as string,
     };
     _sessions.set(handle, session);
+    _localPlcDids?.add(session.pdsDid);
     return session;
   } catch {
     // Account doesn't exist yet — create it
@@ -199,6 +208,7 @@ async function ensureSession(handle: string): Promise<PdsSession | null> {
         refreshJwt: data.refreshJwt as string,
       };
       _sessions.set(handle, session);
+      _localPlcDids?.add(session.pdsDid);
       return session;
     } catch (err) {
       console.error(`[pds-bridge] Cannot create/restore session for ${handle} (pds handle: ${pdsHandle}):`, err);

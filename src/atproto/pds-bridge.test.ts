@@ -182,6 +182,32 @@ describe('initPdsBridge()', () => {
     }
   });
 
+  it('populates the localPlcDids set during init so Jetstream echo-loop prevention works immediately', async () => {
+    const localPlcDids = new Set<string>();
+    await initPdsBridge(
+      [{ handle: 'atlas.mycelium.local' }, { handle: 'mayor.mycelium.local' }],
+      `http://127.0.0.1:${port}`,
+      'adminpass',
+      'test',
+      localPlcDids,
+    );
+    // mock returns did:plc:testmockabc123 for every account
+    expect(localPlcDids.has('did:plc:testmockabc123')).toBe(true);
+  });
+
+  it('updates localPlcDids when a session is lazily established via mirrorRecord', async () => {
+    const localPlcDids = new Set<string>();
+    // Init with no agents — only sets endpoint/password
+    await initPdsBridge([], `http://127.0.0.1:${port}`, 'adminpass', 'test', localPlcDids);
+    expect(localPlcDids.size).toBe(0);
+
+    // Lazy mirrorRecord triggers ensureSession → should update the shared set
+    mirrorRecord('mayor.mycelium.local', 'network.mycelium.task.posting', 'task-1', { status: 'open' });
+    await sleep(150);
+
+    expect(localPlcDids.has('did:plc:testmockabc123')).toBe(true);
+  });
+
   it('uses existing session when createSession succeeds (skips createAccount)', async () => {
     // Mock that accepts createSession directly (simulates account already exists)
     const existingAccountServer = http.createServer((req, res) => {
