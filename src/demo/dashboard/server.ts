@@ -280,6 +280,22 @@ function parseAtUri(uri: string): { collection: string; rkey: string } {
   return { collection: parts[3] ?? '', rkey: parts[4] ?? '' };
 }
 
+/**
+ * Translate a did:plc-based AT URI to its canonical did:key form using the
+ * known Mayor identities. Cross-node events from Jetstream carry did:plc
+ * while local postedTasks/rejectionLog use did:key — this bridges the gap
+ * for dashboard display comparisons.
+ */
+function normalizeMayorUri(mayors: Mayor[], uri: string): string {
+  for (const mayor of mayors) {
+    const plcDid = mayor.identity.plcDid;
+    if (plcDid && uri.startsWith(`at://${plcDid}/`)) {
+      return `at://${mayor.identity.did}/${uri.slice(`at://${plcDid}/`.length)}`;
+    }
+  }
+  return uri;
+}
+
 // ─── Detail builders ──────────────────────────────────────────────────────────
 
 /** Return full detail for a single agent by short handle (e.g. "atlas"). */
@@ -316,7 +332,7 @@ function buildAgentDetail(state: DemoState, handle: string) {
       for (const mayor of state.mayors) {
         const taskDef = mayor.template.tasks.find((t) => {
           const info = mayor.postedTasks.get(t.id);
-          return info && info.uri === comp.taskUri;
+          return info && info.uri === normalizeMayorUri(state.mayors, comp.taskUri);
         });
         if (taskDef) { taskId = taskDef.id; taskTitle = taskDef.title; break; }
       }
@@ -386,7 +402,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
   // Competing claims
   const claims = taskUri
     ? state.firehose.log
-        .filter((e) => e.collection === 'network.mycelium.task.claim' && (e.record as TaskClaim).taskUri === taskUri)
+        .filter((e) => e.collection === 'network.mycelium.task.claim' && normalizeMayorUri(state.mayors, (e.record as TaskClaim).taskUri) === taskUri)
         .map((e) => {
           const claim = e.record as TaskClaim;
           const agent = state.agents.find((a) => a.identity.did === e.did);
@@ -405,7 +421,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
   // Completion
   const completionEvent = taskUri
     ? state.firehose.log.find(
-        (e) => e.collection === 'network.mycelium.task.completion' && (e.record as TaskCompletion).taskUri === taskUri,
+        (e) => e.collection === 'network.mycelium.task.completion' && normalizeMayorUri(state.mayors, (e.record as TaskCompletion).taskUri) === taskUri,
       )
     : undefined;
   const completion = completionEvent ? (completionEvent.record as TaskCompletion) : null;
@@ -413,7 +429,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
   // Reputation stamp for this task
   const stamp = taskUri
     ? (state.firehose.log
-        .find((e) => e.collection === 'network.mycelium.reputation.stamp' && (e.record as ReputationStamp).taskUri === taskUri)
+        .find((e) => e.collection === 'network.mycelium.reputation.stamp' && normalizeMayorUri(state.mayors, (e.record as ReputationStamp).taskUri) === taskUri)
         ?.record as ReputationStamp | undefined) ?? null
     : null;
 
@@ -499,7 +515,7 @@ function buildReputationDetail(state: DemoState, handle: string) {
     for (const mayor of state.mayors) {
       const taskDef = mayor.template.tasks.find((t) => {
         const info = mayor.postedTasks.get(t.id);
-        return info && info.uri === stamp.taskUri;
+        return info && info.uri === normalizeMayorUri(state.mayors, stamp.taskUri);
       });
       if (taskDef) { taskId = taskDef.id; taskTitle = taskDef.title; break; }
     }
