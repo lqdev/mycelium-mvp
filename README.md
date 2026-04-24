@@ -288,5 +288,6 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client
-- **Phase 13** — Multi-orchestrator federation: Mayors on separate PDSs, agents moving between them, tasks delegating across orchestrator boundaries
+- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route exists; needs a registered domain)
+- **Federation** — Multi-Mayor federation with real cross-node task discovery is implemented and actively developed on the [`feat/federation`](../../tree/feat/federation) branch (Phases 13–14 complete, 359 tests)
+- **Production hardening** — Rate limiting, structured logging, health check endpoints, graceful shutdown
