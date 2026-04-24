@@ -302,9 +302,12 @@ export function createAgentRunner(
     const task = event.record as TaskPosting;
     const taskUri = `at://${event.did}/${event.collection}/${event.rkey}`;
 
-    if (event.operation === 'create') {
-      // Evaluate whether to claim this task
-      if (!shouldClaim(agentCapabilities, task)) return;
+    if (event.operation === 'create' || (event.operation === 'update' && task.status === 'open')) {
+      // Evaluate whether to claim this task — skip if we already submitted a claim
+      const alreadyClaimed = claimTracker.has(taskUri);
+      const capable = shouldClaim(agentCapabilities, task);
+      if (alreadyClaimed) return;
+      if (!capable) return;
       if (!options.forceAccept && Math.random() >= def.behavior.acceptRate) return;
 
       // Build claim proposal

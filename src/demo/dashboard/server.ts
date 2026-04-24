@@ -19,7 +19,7 @@ import { getStampsForAgent, aggregateReputation } from '../../reputation/index.j
 import { createDuckDB, queryAll, queryOne, execute } from '../../storage/duckdb.js';
 import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn, shutdownPersistence, registerAgentMapping, loadJetstreamCursor, saveJetstreamCursor } from '../../storage/persistence.js';
 import { getLexicons, getLexicon } from '../../lexicon/index.js';
-import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
+import { initPdsBridge, isPdsBridgeEnabled, mirrorRecord } from '../../atproto/pds-bridge.js';
 import { initJetstream } from '../../atproto/jetstream.js';
 import type {
   AgentCapability,
@@ -169,6 +169,20 @@ async function bootstrapDemo(): Promise<DemoState> {
     }
     // Populate localPlcDids from all registered handles (bridge also keeps it current on lazy sessions)
     for (const plcDid of plcDids.values()) localPlcDids.add(plcDid);
+
+    // Keep Jetstream alive with periodic heartbeats.
+    // Jetstream kills itself after 15s of no new PDS events (designed for high-volume bsky.network
+    // use). Our quiet local PDS triggers this constantly, causing subscriber connections to cycle and
+    // miss events. A 10s heartbeat ensures Jetstream stays alive and cross-node relays are stable.
+    if (pdsAgents.length > 0) {
+      const heartbeatHandle = pdsAgents[0].handle;
+      setInterval(() => {
+        mirrorRecord(heartbeatHandle, 'network.mycelium.heartbeat', 'heartbeat', {
+          $type: 'network.mycelium.heartbeat',
+          timestamp: new Date().toISOString(),
+        });
+      }, 10_000);
+    }
   }
 
   // Init Jetstream federation consumer if configured (env-gated).

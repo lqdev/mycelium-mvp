@@ -75,6 +75,7 @@ services:
 
   jetstream-a:
     image: ghcr.io/bluesky-social/jetstream:sha-8a65de4
+    restart: unless-stopped
     ports:
       - "6008:6008"
     depends_on:
@@ -128,6 +129,7 @@ services:
 
   jetstream-b:
     image: ghcr.io/bluesky-social/jetstream:sha-8a65de4
+    restart: unless-stopped
     ports:
       - "6009:6009"
     depends_on:

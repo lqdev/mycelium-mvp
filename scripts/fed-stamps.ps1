@@ -1,88 +1,92 @@
 # fed-stamps.ps1 — Killer signal: prove cross-node reputation stamps.
-# Finds agents on Node B that earned stamps for tasks posted by Node A's Mayor,
-# and vice versa. A single result row here = full cross-node AT Proto loop proven.
-# Usage: .\scripts\fed-stamps.ps1 [-Agent atlas]
+# Finds agents on Node B that earned stamps from Node A's Mayor (and vice versa)
+# by querying each node's DuckDB via /api/sql. A single result row here = full
+# cross-node AT Proto federation loop proven end-to-end.
+# Usage: .\scripts\fed-stamps.ps1 [-NodeA http://localhost:3000] [-NodeB http://localhost:3001]
 
 param(
   [string]$NodeA  = "http://localhost:3000",
-  [string]$NodeB  = "http://localhost:3001",
-  [string]$Agent  = ""   # optional: drill into a single agent handle
+  [string]$NodeB  = "http://localhost:3001"
 )
+
+function Invoke-SqlQuery($base, $sql) {
+  $enc = [Uri]::EscapeDataString($sql)
+  try {
+    return (Invoke-RestMethod "$base/api/sql?q=$enc" -ErrorAction Stop).rows
+  } catch {
+    return $null
+  }
+}
 
 Write-Host ""
 Write-Host "=== Cross-Node Reputation Stamps ===" -ForegroundColor White
 
+# ── Get agent DID lists from each node ───────────────────────────────────────
 try {
-  $tasksA = Invoke-RestMethod "$NodeA/api/tasks" -ErrorAction Stop
-  $tasksB = Invoke-RestMethod "$NodeB/api/tasks" -ErrorAction Stop
-  $repA   = Invoke-RestMethod "$NodeA/api/reputation" -ErrorAction Stop
-  $repB   = Invoke-RestMethod "$NodeB/api/reputation" -ErrorAction Stop
+  $agentsA = Invoke-RestMethod "$NodeA/api/agents" -ErrorAction Stop
+  $agentsB = Invoke-RestMethod "$NodeB/api/agents" -ErrorAction Stop
 } catch {
   Write-Host "❌ Could not reach one or both nodes: $_" -ForegroundColor Red
-  Write-Host "   Run fed-health.ps1 first." -ForegroundColor DarkRed
   exit 1
 }
 
-function Get-Did($uri) {
-  if (-not $uri) { return $null }
-  return ($uri -split '/')[2]
+$didsA = $agentsA | ForEach-Object { $_.did } | Where-Object { $_ }
+$didsB = $agentsB | ForEach-Object { $_.did } | Where-Object { $_ }
+
+if (-not $didsB) {
+  Write-Host "❌ Node B has no agents — is the worker stack running?" -ForegroundColor Red
+  exit 1
 }
 
-# Collect the DID prefixes used by each node's task URIs
-$aDids = ($tasksA | Where-Object { $_.uri } | ForEach-Object { Get-Did $_.uri }) | Select-Object -Unique
-$bDids = ($tasksB | Where-Object { $_.uri } | ForEach-Object { Get-Did $_.uri }) | Select-Object -Unique
+Write-Host ""
+if ($didsA) { Write-Host "  Node A agents: $($didsA.Count)" -ForegroundColor DarkGray }
+else         { Write-Host "  Node A agents: 0 (orchestrator-only mode)" -ForegroundColor DarkGray }
+Write-Host "  Node B agents: $($didsB.Count)" -ForegroundColor DarkGray
+Write-Host ""
 
-# ── Per-agent deep dive ────────────────────────────────────────────────────────
+# ── Query Node A's DB for stamps issued to Node B agents ─────────────────────
+$didListB = ($didsB | ForEach-Object { "'$_'" }) -join ","
+$qA = "SELECT json_extract_string(content, '`$.subjectDid') as recipientDid, json_extract_string(content, '`$.taskUri') as taskUri, json_extract_string(content, '`$.overallScore') as score FROM records WHERE collection = 'network.mycelium.reputation.stamp' AND json_extract_string(content, '`$.subjectDid') IN ($didListB)"
+$crossFromA = Invoke-SqlQuery $NodeA $qA
 
-function Show-AgentStamps($handle, $nodeLabel, $base, $foreignDids) {
-  try {
-    $detail = Invoke-RestMethod "$base/api/agents/$handle" -ErrorAction Stop
-  } catch {
-    Write-Host "    (could not fetch $handle from $nodeLabel)" -ForegroundColor DarkGray
-    return 0
-  }
-
-  if (-not $detail.stamps -or $detail.stamps.Count -eq 0) {
-    Write-Host "    $handle @ $nodeLabel — no stamps yet" -ForegroundColor DarkGray
-    return 0
-  }
-
-  $crossCount = 0
-  foreach ($stamp in $detail.stamps) {
-    $did = Get-Did $stamp.taskUri
-    $isCross = $foreignDids -contains $did
-    if ($isCross) {
-      $crossCount++
-      Write-Host ("    ✅ {0,-10} @ {1} — stamp for task on FOREIGN node  score={2}  quality={3}" -f `
-        $handle, $nodeLabel, $stamp.score, $stamp.quality) -ForegroundColor Green
-      Write-Host ("       taskUri: {0}" -f $stamp.taskUri) -ForegroundColor DarkGreen
-    }
-  }
-
-  if ($crossCount -eq 0) {
-    Write-Host ("    {0,-10} @ {1} — {2} stamp(s), all local" -f $handle, $nodeLabel, $detail.stamps.Count) -ForegroundColor DarkGray
-  }
-  return $crossCount
+# ── Query Node B's DB for stamps issued to Node A agents (if Node A has agents)
+$crossFromB = $null
+if ($didsA) {
+  $didListA = ($didsA | ForEach-Object { "'$_'" }) -join ","
+  $qB = "SELECT json_extract_string(content, '`$.subjectDid') as recipientDid, json_extract_string(content, '`$.taskUri') as taskUri, json_extract_string(content, '`$.overallScore') as score FROM records WHERE collection = 'network.mycelium.reputation.stamp' AND json_extract_string(content, '`$.subjectDid') IN ($didListA)"
+  $crossFromB = Invoke-SqlQuery $NodeB $qB
 }
 
-# Handles to check (all 8 agents)
-$handles = @("atlas","beacon","cedar","drift","echo","finch","grove","harbor")
-if ($Agent) { $handles = @($Agent) }
+# ── Build handle lookup maps ──────────────────────────────────────────────────
+$handleByDid = @{}
+foreach ($a in $agentsA) { if ($a.did) { $handleByDid[$a.did] = "$($a.handle)@A" } }
+foreach ($b in $agentsB) { if ($b.did) { $handleByDid[$b.did] = "$($b.handle)@B" } }
 
-Write-Host ""
-Write-Host "  Searching for agents with cross-node stamps..." -ForegroundColor Cyan
-Write-Host ""
-
+# ── Display results ───────────────────────────────────────────────────────────
 $totalCross = 0
 
-foreach ($h in $handles) {
-  # Check this agent on Node B — did it earn stamps for Node A tasks?
-  $totalCross += Show-AgentStamps $h "Node B" $NodeB $aDids
-  # Check this agent on Node A — did it earn stamps for Node B tasks?
-  $totalCross += Show-AgentStamps $h "Node A" $NodeA $bDids
+if ($crossFromA -and $crossFromA.Count -gt 0) {
+  Write-Host "  ✅ Node A's Mayor stamped Node B agents — cross-node stamps:" -ForegroundColor Green
+  Write-Host ""
+  foreach ($row in $crossFromA) {
+    $label = if ($handleByDid[$row.recipientDid]) { $handleByDid[$row.recipientDid] } else { $row.recipientDid.Substring(0,20) + "…" }
+    Write-Host ("    ✅ {0,-18}  score={1,-6}  task={2}" -f $label, $row.score, ($row.taskUri -replace 'at://did:key:[^/]+/', '…/')) -ForegroundColor Green
+    $totalCross++
+  }
+  Write-Host ""
 }
 
-Write-Host ""
+if ($crossFromB -and $crossFromB.Count -gt 0) {
+  Write-Host "  ✅ Node B's Mayor stamped Node A agents — cross-node stamps:" -ForegroundColor Green
+  Write-Host ""
+  foreach ($row in $crossFromB) {
+    $label = if ($handleByDid[$row.recipientDid]) { $handleByDid[$row.recipientDid] } else { $row.recipientDid.Substring(0,20) + "…" }
+    Write-Host ("    ✅ {0,-18}  score={1,-6}  task={2}" -f $label, $row.score, ($row.taskUri -replace 'at://did:key:[^/]+/', '…/')) -ForegroundColor Green
+    $totalCross++
+  }
+  Write-Host ""
+}
+
 if ($totalCross -gt 0) {
   Write-Host "✅ $totalCross cross-node stamp(s) found — full AT Proto federation loop proven end-to-end!" -ForegroundColor Green
 } else {
@@ -93,12 +97,14 @@ if ($totalCross -gt 0) {
 Write-Host ""
 
 # ── Summary table ─────────────────────────────────────────────────────────────
-
 Write-Host "  Reputation summary across both nodes:" -ForegroundColor Cyan
 Write-Host ""
 
-$allRep = @()
-foreach ($r in $repA) { $allRep += [PSCustomObject]@{ Node="A"; DID=$r.agentDid; Stamps=$r.totalStamps; Score=$r.averageScore } }
-foreach ($r in $repB) { $allRep += [PSCustomObject]@{ Node="B"; DID=$r.agentDid; Stamps=$r.totalStamps; Score=$r.averageScore } }
+$repA = Invoke-SqlQuery $NodeA "SELECT json_extract_string(content, '`$.subjectDid') as agentDid, CAST(COUNT(*) AS VARCHAR) as stamps, CAST(AVG(CAST(json_extract_string(content, '`$.overallScore') AS FLOAT)) AS VARCHAR) as avgScore FROM records WHERE collection = 'network.mycelium.reputation.stamp' GROUP BY agentDid ORDER BY stamps DESC LIMIT 10"
+$repB = Invoke-SqlQuery $NodeB "SELECT json_extract_string(content, '`$.subjectDid') as agentDid, CAST(COUNT(*) AS VARCHAR) as stamps, CAST(AVG(CAST(json_extract_string(content, '`$.overallScore') AS FLOAT)) AS VARCHAR) as avgScore FROM records WHERE collection = 'network.mycelium.reputation.stamp' GROUP BY agentDid ORDER BY stamps DESC LIMIT 10"
 
-$allRep | Sort-Object Node, Score -Descending | Format-Table -AutoSize
+$allRep = @()
+if ($repA) { foreach ($r in $repA) { $handle = if ($handleByDid[$r.agentDid]) { $handleByDid[$r.agentDid] } else { $r.agentDid.Substring(0,16) + "…" }; $allRep += [PSCustomObject]@{ IssuedBy="Node A Mayor"; Recipient=$handle; Stamps=$r.stamps; AvgScore=[math]::Round([float]$r.avgScore,1) } } }
+if ($repB) { foreach ($r in $repB) { $handle = if ($handleByDid[$r.agentDid]) { $handleByDid[$r.agentDid] } else { $r.agentDid.Substring(0,16) + "…" }; $allRep += [PSCustomObject]@{ IssuedBy="Node B Mayor"; Recipient=$handle; Stamps=$r.stamps; AvgScore=[math]::Round([float]$r.avgScore,1) } } }
+
+$allRep | Format-Table -AutoSize

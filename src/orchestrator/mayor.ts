@@ -317,6 +317,7 @@ function processClaimsForTask(
   mayor: Mayor,
   pendingClaims: Map<string, TaskClaim[]>,
   taskUri: string,
+  retryCount = 0,
 ): void {
   const claims = pendingClaims.get(taskUri);
   if (!claims || claims.length === 0) return;
@@ -327,7 +328,13 @@ function processClaimsForTask(
   try {
     task = getTask(mayor.repo, taskUri);
   } catch {
-    return; // Task not in mayor's repo
+    // Task not in repo yet (claim arrived before startProject via Jetstream replay).
+    // Defer up to 3 retries (≤45s window) so startProject can populate the repo.
+    if (retryCount < 3) {
+      pendingClaims.set(taskUri, claims);
+      setTimeout(() => processClaimsForTask(mayor, pendingClaims, taskUri, retryCount + 1), 15_000);
+    }
+    return;
   }
 
   // Only assign if still open or claimed
