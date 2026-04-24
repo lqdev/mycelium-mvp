@@ -225,6 +225,29 @@ export function createMayor(
   return mayor;
 }
 
+// ─── Cross-node URI normalization ────────────────────────────────────────────
+
+/**
+ * If `uri` belongs to this Mayor (authored by its local `did:key` OR its PDS
+ * `did:plc`), return the canonical local `did:key` form. Returns `null` for
+ * URIs that belong to a different orchestrator so callers can safely ignore
+ * foreign events without rkey-collision false-positives.
+ */
+function canonicalOwnTaskUri(mayor: Mayor, uri: string): string | null {
+  const keyPrefix = `at://${mayor.identity.did}/`;
+  if (uri.startsWith(keyPrefix)) return uri; // already local did:key form
+
+  const plcDid = mayor.identity.plcDid;
+  if (plcDid) {
+    const plcPrefix = `at://${plcDid}/`;
+    if (uri.startsWith(plcPrefix)) {
+      return `at://${mayor.identity.did}/${uri.slice(plcPrefix.length)}`;
+    }
+  }
+
+  return null; // foreign task — caller should ignore
+}
+
 // ─── Firehose handler ─────────────────────────────────────────────────────────
 
 function handleFirehoseEvent(
@@ -262,13 +285,16 @@ function handleFirehoseEvent(
     }
   } else if (event.collection === 'network.mycelium.task.claim') {
     const claim = event.record as TaskClaim;
+    // Normalize did:plc → did:key; returns null for claims targeting a foreign Mayor
+    const taskUri = canonicalOwnTaskUri(mayor, claim.taskUri);
+    if (!taskUri) return;
     const claimUri = `at://${event.did}/${event.collection}/${event.rkey}`;
     const claimWithUri = { ...claim, _claimUri: claimUri };
-    const existing = pendingClaims.get(claim.taskUri) ?? [];
+    const existing = pendingClaims.get(taskUri) ?? [];
     existing.push(claimWithUri as unknown as TaskClaim);
-    pendingClaims.set(claim.taskUri, existing);
+    pendingClaims.set(taskUri, existing);
     // Schedule claim processing after all synchronous claim writes settle
-    setTimeout(() => processClaimsForTask(mayor, pendingClaims, claim.taskUri), 0);
+    setTimeout(() => processClaimsForTask(mayor, pendingClaims, taskUri), 0);
   } else if (event.collection === 'network.mycelium.task.completion') {
     const completion = event.record as TaskCompletion;
     const completionUri = `at://${event.did}/${event.collection}/${event.rkey}`;
@@ -376,7 +402,9 @@ function handleCompletion(
   completion: TaskCompletion,
   completionUri: string,
 ): void {
-  const { taskUri } = completion;
+  // Normalize did:plc → did:key; return early for completions targeting a foreign Mayor
+  const taskUri = canonicalOwnTaskUri(mayor, completion.taskUri);
+  if (!taskUri) return;
 
   // Transition task: in_progress → completed
   try {

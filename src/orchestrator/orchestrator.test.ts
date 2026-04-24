@@ -467,3 +467,164 @@ describe('Mayor quality gate', () => {
     expect(mayor.rejectionLog.get(task001Uri)?.length).toBe(2); // 2 rejections, then force-accept
   });
 });
+
+// ─── Phase 14b: Cross-node DID normalization ──────────────────────────────────
+
+describe('Phase 14b: cross-node claim normalization', () => {
+  let firehose: Firehose;
+  let mayor: Mayor;
+  let mayorRepo: ReturnType<typeof createMemoryRepository>;
+  let mayorIdentity: ReturnType<typeof generateIdentity>;
+  const MAYOR_PLC = 'did:plc:test-mayor-abc123';
+
+  beforeEach(() => {
+    firehose = createFirehose();
+    const setup = makeMayor(firehose);
+    mayor = setup.mayor;
+    mayorRepo = setup.repo;
+    mayorIdentity = setup.identity;
+    // Simulate Phase 14a: Mayor has a PDS-assigned plcDid
+    mayorIdentity.plcDid = MAYOR_PLC;
+    startProject(mayor, 'Build the Mycelium Dashboard');
+  });
+
+  it('assigns task when claim arrives with did:plc taskUri (remote agent)', async () => {
+    const agent = makeAgent(firehose, 'remote-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    // Remote agent knows the task via Jetstream — its taskUri uses the Mayor's did:plc
+    const plcTaskUri = `at://${MAYOR_PLC}/network.mycelium.task.posting/task-001`;
+    claimTask(agent.repo, plcTaskUri, 'Design component library', {
+      approach: 'React + TypeScript',
+      estimatedDuration: 'PT52M',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.assigneeDid).toBe(agent.identity.did);
+    expect(task.status).toBe('assigned');
+  });
+
+  it('ignores claim for a foreign Mayor task even if rkey collides', async () => {
+    const agent = makeAgent(firehose, 'remote-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    // Another Mayor's task — same rkey (task-001) but different did:plc
+    const foreignPlcUri = 'at://did:plc:other-mayor-xyz/network.mycelium.task.posting/task-001';
+    claimTask(agent.repo, foreignPlcUri, 'Design component library', {
+      approach: 'Exploiting rkey collision',
+      estimatedDuration: 'PT52M',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // This Mayor's task-001 should remain unassigned
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.status).toBe('open');
+    expect(task.assigneeDid).toBeUndefined();
+  });
+
+  it('picks the best candidate from a mixed local+remote claim pool', async () => {
+    // Local agent claims with did:key URI (from in-process firehose)
+    const localAgent = makeAgent(firehose, 'local-agent.local');
+    writeProfile(localAgent.repo, localAgent.identity);
+    writeCapability(localAgent.repo, 'react-basic', 'frontend', 'beginner', ['react', 'typescript', 'components']);
+
+    // Remote agent claims with did:plc URI (via Jetstream bridge)
+    const remoteAgent = makeAgent(firehose, 'remote-expert.local');
+    writeProfile(remoteAgent.repo, remoteAgent.identity);
+    writeCapability(remoteAgent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    const localTaskUri = mayor.postedTasks.get('task-001')!.uri; // did:key form
+    const plcTaskUri = `at://${MAYOR_PLC}/network.mycelium.task.posting/task-001`; // did:plc form
+
+    // Both claims arrive before setTimeout fires (same tick)
+    claimTask(localAgent.repo, localTaskUri, 'Design component library', {
+      approach: 'Beginner attempt',
+      estimatedDuration: 'PT90M',
+      confidenceLevel: 'low',
+    }, ['react-basic']);
+
+    claimTask(remoteAgent.repo, plcTaskUri, 'Design component library', {
+      approach: 'Expert approach via Jetstream',
+      estimatedDuration: 'PT52M',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Remote expert should win from the combined pool (single assignment)
+    const task = getRecord(mayorRepo, 'network.mycelium.task.posting', 'task-001').content as TaskPosting;
+    expect(task.status).toBe('assigned');
+    expect(task.assigneeDid).toBe(remoteAgent.identity.did);
+  });
+
+  it('accepts remote completion with did:plc taskUri and unblocks dependent tasks', async () => {
+    const agent = makeAgent(firehose, 'remote-backend.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'api-design', 'backend', 'expert', ['api-design', 'node-js']);
+
+    const plcTask002Uri = `at://${MAYOR_PLC}/network.mycelium.task.posting/task-002`;
+    const { uri: claimUri } = claimTask(agent.repo, plcTask002Uri, 'Build REST API', {
+      approach: 'Express',
+      estimatedDuration: 'PT40M',
+      confidenceLevel: 'high',
+    }, ['api-design']);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Manually transition: Mayor uses did:key URI internally
+    const localTask002Uri = mayor.postedTasks.get('task-002')!.uri;
+    startTask(mayorRepo, localTask002Uri);
+
+    // Remote agent completes with did:plc URI
+    completeTask(agent.repo, claimUri, plcTask002Uri, {
+      summary: 'REST API built and tested',
+      artifacts: [{ name: 'routes.ts', type: 'code', contentHash: 'sha256-abc', size: 200, description: 'Routes' }],
+      metrics: { executionTime: 'PT40M' },
+    });
+
+    // task-002 accepted → task-003 (depends on task-002) should be unblocked
+    expect(mayor.postedTasks.get('task-002')!.status).toBe('accepted');
+    expect(mayor.postedTasks.has('task-003')).toBe(true);
+    expect(mayor.postedTasks.get('task-003')!.status).toBe('open');
+  });
+
+  it('counts attempts correctly when remote completion is rejected via did:plc URI', async () => {
+    const agent = makeAgent(firehose, 'remote-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    const plcTask001Uri = `at://${MAYOR_PLC}/network.mycelium.task.posting/task-001`;
+    const { uri: claimUri } = claimTask(agent.repo, plcTask001Uri, 'Design component library', {
+      approach: 'React',
+      estimatedDuration: 'PT52M',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+    startTask(mayorRepo, mayor.postedTasks.get('task-001')!.uri);
+
+    // Remote completion with poor quality via did:plc URI
+    const modelRef = { modelDid: 'did:key:zModel', providerDid: 'did:key:zProv' };
+    completeTask(agent.repo, claimUri, plcTask001Uri, {
+      summary: 'x', // < 30 chars → poor
+      artifacts: [],
+      metrics: { executionTime: 'PT10M', testsPassed: 0, testsTotal: 10, coveragePercent: 10 },
+      intelligenceUsed: modelRef,
+    });
+
+    // Task should be re-opened and attempt count incremented to 1
+    const taskInfo = mayor.postedTasks.get('task-001')!;
+    expect(taskInfo.status).toBe('open');
+    expect(taskInfo.attempts).toBe(1);
+    // Rejection logged under the local (did:key) URI
+    const localUri = mayor.postedTasks.get('task-001')!.uri;
+    expect(mayor.rejectionLog.get(localUri)?.length).toBe(1);
+  });
+});
