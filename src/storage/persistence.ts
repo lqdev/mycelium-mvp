@@ -3,7 +3,7 @@
 // are fire-and-forget: they never block the synchronous simulation cascade.
 
 import type { DuckDBConnection } from './duckdb.js';
-import { execute, queryAll } from './duckdb.js';
+import { execute, queryAll, queryOne } from './duckdb.js';
 import type { CommitRow, FirehoseEvent, StoredRecordRow, AgentIdentity } from '../schemas/types.js';
 import { mirrorRecord, mirrorDelete } from '../atproto/pds-bridge.js';
 
