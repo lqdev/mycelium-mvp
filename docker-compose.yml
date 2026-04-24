@@ -70,7 +70,7 @@ services:
     depends_on:
       - pds
     environment:
-      - JETSTREAM_WEBSOCKET_URLS=ws://pds:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_WS_URL=ws://pds:2583/xrpc/com.atproto.sync.subscribeRepos
       - JETSTREAM_LISTEN_ADDR=:6008
 
 volumes:

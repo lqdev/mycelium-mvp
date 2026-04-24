@@ -81,7 +81,7 @@ services:
       - pds-a
     environment:
       # Reads from Node A's PDS — streams Node A events out on :6008
-      - JETSTREAM_WEBSOCKET_URLS=ws://pds-a:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_WS_URL=ws://pds-a:2583/xrpc/com.atproto.sync.subscribeRepos
       - JETSTREAM_LISTEN_ADDR=:6008
 
   # ── Node B — Worker (Agent Guild) ────────────────────────────────────────
@@ -134,7 +134,7 @@ services:
       - pds-b
     environment:
       # Reads from Node B's PDS — streams Node B events out on :6009
-      - JETSTREAM_WEBSOCKET_URLS=ws://pds-b:2583/xrpc/com.atproto.sync.subscribeRepos
+      - JETSTREAM_WS_URL=ws://pds-b:2583/xrpc/com.atproto.sync.subscribeRepos
       - JETSTREAM_LISTEN_ADDR=:6009
 
 volumes:
