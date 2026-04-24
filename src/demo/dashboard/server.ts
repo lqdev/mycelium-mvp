@@ -23,7 +23,9 @@ import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
 import { initJetstream } from '../../atproto/jetstream.js';
 import type {
   AgentCapability,
+  AgentIdentity,
   AgentProfile,
+  AgentRepository,
   AgentState,
   AggregatedReputation,
   Firehose,
@@ -44,14 +46,26 @@ const PUBLIC_DIR = join(__dirname, 'public');
 
 // ─── Bootstrap state ──────────────────────────────────────────────────────────
 
+// Deployment role flags — set at startup, read by bootstrapDemo and the entry point
+const isOrchestrator = process.argv.includes('--orchestrator');
+const isWorker = process.argv.includes('--worker');
+
 interface DemoState {
   firehose: Firehose;
   mayors: Mayor[];
   agents: BootstrappedAgent[];
   dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
+  isOrchestrator: boolean;
+  isWorker: boolean;
 }
 
 async function bootstrapDemo(): Promise<DemoState> {
+  // Fail fast if contradictory role flags are set
+  if (isOrchestrator && isWorker) {
+    console.error('[dashboard] Error: --orchestrator and --worker are mutually exclusive');
+    process.exit(1);
+  }
+
   // Ensure data directory exists and open DuckDB
   mkdirSync('./data', { recursive: true });
   const { instance: dbInstance, conn } = await createDuckDB('./data/mycelium.duckdb');
@@ -77,17 +91,36 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   const intelligence = bootstrapIntelligence(firehose, savedIdentities);
 
-  const savedMayorIdentity = savedIdentities.get('mayor.mycelium.local');
-  const mayorIdentity = savedMayorIdentity ?? generateIdentity('mayor.mycelium.local', 'Mayor Alpha (Orchestrator)');
-  const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
-  const mayorAlpha = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+  // ── Mayor setup (orchestrator or full-node; skipped in worker mode) ──────────
+  let mayorAlpha: Mayor | undefined;
+  let mayorBeta: Mayor | undefined;
+  let mayorIdentity: AgentIdentity | undefined;
+  let mayorBetaIdentity: AgentIdentity | undefined;
+  let mayorRepo: AgentRepository | undefined;
+  let mayorBetaRepo: AgentRepository | undefined;
+  let savedMayorIdentity: AgentIdentity | undefined;
+  let savedMayorBetaIdentity: AgentIdentity | undefined;
 
-  const savedMayorBetaIdentity = savedIdentities.get('mayor-beta.mycelium.local');
-  const mayorBetaIdentity = savedMayorBetaIdentity ?? generateIdentity('mayor-beta.mycelium.local', 'Mayor Beta (Orchestrator)');
-  const mayorBetaRepo = createMemoryRepository(mayorBetaIdentity, firehose);
-  const mayorBeta = createMayor(mayorBetaIdentity, mayorBetaRepo, firehose, GATEWAY_TEMPLATE);
+  if (!isWorker) {
+    savedMayorIdentity = savedIdentities.get('mayor.mycelium.local');
+    mayorIdentity = savedMayorIdentity ?? generateIdentity('mayor.mycelium.local', 'Mayor Alpha (Orchestrator)');
+    mayorRepo = createMemoryRepository(mayorIdentity, firehose);
+    mayorAlpha = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
 
-  const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
+    savedMayorBetaIdentity = savedIdentities.get('mayor-beta.mycelium.local');
+    mayorBetaIdentity = savedMayorBetaIdentity ?? generateIdentity('mayor-beta.mycelium.local', 'Mayor Beta (Orchestrator)');
+    mayorBetaRepo = createMemoryRepository(mayorBetaIdentity, firehose);
+    mayorBeta = createMayor(mayorBetaIdentity, mayorBetaRepo, firehose, GATEWAY_TEMPLATE);
+  }
+
+  // ── Agent setup (worker or full-node; skipped in orchestrator mode) ──────────
+  let agents: BootstrappedAgent[] = [];
+  let newAgentIdentities: AgentIdentity[] = [];
+  if (!isOrchestrator) {
+    const bootstrapped = bootstrapAgents(firehose, intelligence, savedIdentities);
+    agents = bootstrapped.agents;
+    newAgentIdentities = bootstrapped.newIdentities;
+  }
 
   // Save intelligence provider identities (no PDS accounts, safe to save now)
   for (const id of intelligence.newIdentities) {
@@ -99,8 +132,8 @@ async function bootstrapDemo(): Promise<DemoState> {
     registerAgentMapping(identity.did, def.handle);
   }
   // Mayors get PDS accounts in Phase 14 — register their DIDs too
-  registerAgentMapping(mayorIdentity.did, mayorIdentity.handle);
-  registerAgentMapping(mayorBetaIdentity.did, mayorBetaIdentity.handle);
+  if (mayorIdentity) registerAgentMapping(mayorIdentity.did, mayorIdentity.handle);
+  if (mayorBetaIdentity) registerAgentMapping(mayorBetaIdentity.did, mayorBetaIdentity.handle);
 
   // Init PDS bridge if configured (env-gated; no-op when PDS_ENDPOINT is not set).
   // Bridge init happens BEFORE saving agent identities so plcDid is set on first save (no double-save race).
@@ -110,10 +143,11 @@ async function bootstrapDemo(): Promise<DemoState> {
   const pdsAdminPassword = process.env.PDS_ADMIN_PASSWORD;
   const localPlcDids = new Set<string>();
   if (pdsEndpoint && pdsAdminPassword) {
+    // Orchestrator: mayor accounts only. Worker: agent accounts only. Full: all accounts.
     const pdsAgents = [
-      ...agents.map(({ def }) => ({ handle: def.handle })),
-      { handle: mayorIdentity.handle },
-      { handle: mayorBetaIdentity.handle },
+      ...(!isOrchestrator ? agents.map(({ def }) => ({ handle: def.handle })) : []),
+      ...(!isWorker && mayorIdentity ? [{ handle: mayorIdentity.handle }] : []),
+      ...(!isWorker && mayorBetaIdentity ? [{ handle: mayorBetaIdentity.handle }] : []),
     ];
     const plcDids = await initPdsBridge(
       pdsAgents,
@@ -129,6 +163,7 @@ async function bootstrapDemo(): Promise<DemoState> {
     }
     // Apply PDS-assigned did:plc to Mayor identities
     for (const identity of [mayorIdentity, mayorBetaIdentity]) {
+      if (!identity) continue;
       const plcDid = plcDids.get(identity.handle);
       if (plcDid && plcDid !== identity.plcDid) identity.plcDid = plcDid;
     }
@@ -138,8 +173,9 @@ async function bootstrapDemo(): Promise<DemoState> {
 
   // Init Jetstream federation consumer if configured (env-gated).
   // localPlcDids prevents re-broadcasting our own events back into the firehose.
-  // On first connect (no cursor in DB): live tail only (safe, no replay side-effects).
-  // On restart (cursor in DB): delta replay from last seen position.
+  // Orchestrator mode: use cursor=0 on first connect (no saved cursor) to replay all stored
+  // Jetstream events — this catches worker agent profiles even if workers started before us.
+  // Worker/full mode: live tail only when no cursor (safe, no replay side-effects on restart).
   const jetstreamEndpoint = process.env.JETSTREAM_ENDPOINT;
   if (jetstreamEndpoint) {
     const savedCursor = await loadJetstreamCursor(jetstreamEndpoint);
@@ -147,7 +183,7 @@ async function bootstrapDemo(): Promise<DemoState> {
       jetstreamEndpoint,
       firehose,
       localPlcDids,
-      savedCursor ?? undefined,
+      savedCursor ?? (isOrchestrator ? 0 : undefined),
       (timeUs) => saveJetstreamCursor(jetstreamEndpoint, timeUs),
     );
   }
@@ -162,33 +198,58 @@ async function bootstrapDemo(): Promise<DemoState> {
       saveIdentity(identity);
     }
   }
-  // Save Mayor identities — new on first run, updated if plcDid changed
-  for (const { identity, saved } of [
-    { identity: mayorIdentity, saved: savedMayorIdentity },
-    { identity: mayorBetaIdentity, saved: savedMayorBetaIdentity },
-  ]) {
-    if (!saved || (identity.plcDid && identity.plcDid !== saved.plcDid)) {
-      saveIdentity(identity);
+  // Save Mayor identities — new on first run, updated if plcDid changed (only in orchestrator/full mode)
+  if (!isWorker) {
+    for (const { identity, saved } of [
+      { identity: mayorIdentity, saved: savedMayorIdentity },
+      { identity: mayorBetaIdentity, saved: savedMayorBetaIdentity },
+    ]) {
+      if (!identity) continue;
+      if (!saved || (identity.plcDid && identity.plcDid !== saved.plcDid)) {
+        saveIdentity(identity);
+      }
     }
   }
 
-  const mayorRepos = new Map([
-    [mayorIdentity.did, mayorRepo],
-    [mayorBetaIdentity.did, mayorBetaRepo],
-  ]);
+  // mayorRepos: empty in worker mode (agents use it to skip startTask for cross-node tasks)
+  const mayorRepos: Map<string, AgentRepository> = isWorker
+    ? new Map()
+    : new Map([
+        ...(mayorIdentity && mayorRepo ? [[mayorIdentity.did, mayorRepo] as [string, AgentRepository]] : []),
+        ...(mayorBetaIdentity && mayorBetaRepo ? [[mayorBetaIdentity.did, mayorBetaRepo] as [string, AgentRepository]] : []),
+      ]);
 
   const runners = agents.map(({ def, identity, repo }) =>
     createAgentRunner(def, identity, repo, mayorRepos, firehose, intelligence, undefined, { forceAccept: true }),
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayors: [mayorAlpha, mayorBeta], agents, dbInstance };
+  const mayors: Mayor[] = [];
+  if (mayorAlpha) mayors.push(mayorAlpha);
+  if (mayorBeta) mayors.push(mayorBeta);
+
+  return { firehose, mayors, agents, dbInstance, isOrchestrator, isWorker };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
 
+/**
+ * Resolve a display handle for an agent DID, checking local agents first,
+ * then the Mayor's agentRegistry (for remote/cross-node agents in orchestrator mode).
+ */
+function resolveAgentHandle(state: DemoState, did: string): string | undefined {
+  const localAgent = state.agents.find((a) => a.identity.did === did || a.identity.plcDid === did);
+  if (localAgent) return localAgent.def.handle.split('.')[0];
+  // Check mayors' agentRegistries (populated by Jetstream profile events from remote nodes)
+  for (const mayor of state.mayors) {
+    const entry = mayor.agentRegistry.get(did);
+    if (entry) return entry.handle?.split('.')[0] ?? did.slice(-8);
+  }
+  return undefined;
+}
+
 function buildAgentList(state: DemoState) {
-  return state.agents.map(({ def, identity, repo }) => {
+  const local = state.agents.map(({ def, identity, repo }) => {
     let profile: AgentProfile | null = null;
     try {
       profile = getRecord(repo, 'network.mycelium.agent.profile', 'self').content as AgentProfile;
@@ -208,8 +269,36 @@ function buildAgentList(state: DemoState) {
       model: def.primaryModelSlug,
       capabilities: caps.map((c) => ({ name: c.name, domain: c.domain, proficiency: c.proficiencyLevel })),
       reputation,
+      isExternal: false,
     };
   });
+
+  // In orchestrator mode, local agents is empty — build agent list from Mayor's agentRegistry
+  // (populated by Jetstream profile events from remote worker nodes)
+  if (state.isOrchestrator && local.length === 0) {
+    const seen = new Set<string>();
+    const external: typeof local = [];
+    for (const mayor of state.mayors) {
+      for (const [, entry] of mayor.agentRegistry) {
+        if (seen.has(entry.did)) continue;
+        seen.add(entry.did);
+        const stamps = getStampsForAgent(state.firehose, entry.did);
+        external.push({
+          did: entry.did,
+          handle: entry.handle?.split('.')[0] ?? entry.did.slice(-8),
+          displayName: entry.handle ?? entry.did,
+          description: '🌐 External agent (discovered via Jetstream)',
+          model: 'unknown',
+          capabilities: entry.capabilities.map((c) => ({ name: c.name, domain: c.domain, proficiency: c.proficiencyLevel })),
+          reputation: stamps.length > 0 ? aggregateReputation(stamps) : null,
+          isExternal: true,
+        });
+      }
+    }
+    return external;
+  }
+
+  return local;
 }
 
 function buildTaskList(state: DemoState) {
@@ -231,9 +320,6 @@ function buildTaskList(state: DemoState) {
       } catch {
         // use info.status
       }
-      const agentEntry = assigneeDid
-        ? state.agents.find((a) => a.identity.did === assigneeDid)
-        : undefined;
 
       tasks.push({
         id,
@@ -243,7 +329,7 @@ function buildTaskList(state: DemoState) {
         domain: def.requiredCapabilities[0]?.domain ?? 'general',
         complexity: def.complexity,
         priority: def.priority,
-        assignee: agentEntry?.def.handle.split('.')[0],
+        assignee: assigneeDid ? resolveAgentHandle(state, assigneeDid) : undefined,
         mayorHandle,
       });
     }
@@ -268,6 +354,21 @@ function buildTaskList(state: DemoState) {
 }
 
 function buildReputationList(state: DemoState): AggregatedReputation[] {
+  // In orchestrator mode, local agents is empty — collect reputation from firehose stamps
+  // which carry the remote (cross-node) agent DIDs as subjects.
+  if (state.isOrchestrator) {
+    const seenDids = new Set<string>();
+    const results: AggregatedReputation[] = [];
+    for (const event of state.firehose.log) {
+      if (event.collection !== 'network.mycelium.reputation.stamp') continue;
+      const stamp = event.record as ReputationStamp;
+      if (!stamp.subjectDid || seenDids.has(stamp.subjectDid)) continue;
+      seenDids.add(stamp.subjectDid);
+      const stamps = getStampsForAgent(state.firehose, stamp.subjectDid);
+      if (stamps.length > 0) results.push(aggregateReputation(stamps));
+    }
+    return results;
+  }
   return state.agents.flatMap(({ identity }) => {
     const stamps = getStampsForAgent(state.firehose, identity.did);
     if (stamps.length === 0) return [];
@@ -405,11 +506,10 @@ function buildTaskDetail(state: DemoState, taskId: string) {
         .filter((e) => e.collection === 'network.mycelium.task.claim' && normalizeMayorUri(state.mayors, (e.record as TaskClaim).taskUri) === taskUri)
         .map((e) => {
           const claim = e.record as TaskClaim;
-          const agent = state.agents.find((a) => a.identity.did === e.did);
           return {
             seq: e.seq,
             timestamp: e.timestamp,
-            claimerHandle: agent?.def.handle.split('.')[0] ?? claim.claimerDid,
+            claimerHandle: resolveAgentHandle(state, claim.claimerDid) ?? claim.claimerDid,
             claimerDid: claim.claimerDid,
             proposal: claim.proposal,
             matchingCapabilities: claim.matchingCapabilities,
@@ -437,8 +537,7 @@ function buildTaskDetail(state: DemoState, taskId: string) {
   const rejections = (taskUri ? ownerMayor.rejectionLog.get(taskUri) : undefined)?.map(
     (r) => ({
       agentDid: r.agentDid,
-      agentHandle:
-        state.agents.find((a) => a.identity.did === r.agentDid)?.def.handle.split('.')[0] ?? null,
+      agentHandle: resolveAgentHandle(state, r.agentDid) ?? null,
       reason: r.reason,
     }),
   ) ?? [];
@@ -456,8 +555,10 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     .map((t) => ({ id: t.id, title: t.title }));
 
   // Assignee agent info
-  const assigneeAgent = posting?.assigneeDid
-    ? state.agents.find((a) => a.identity.did === posting!.assigneeDid)
+  const assigneeDid = posting?.assigneeDid;
+  const assigneeHandle = assigneeDid ? resolveAgentHandle(state, assigneeDid) : undefined;
+  const assigneeAgent = assigneeDid
+    ? state.agents.find((a) => a.identity.did === assigneeDid)
     : undefined;
 
   return {
@@ -470,10 +571,10 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     priority: taskDef.priority,
     status: posting?.status ?? info?.status ?? 'pending',
     mayorHandle: ownerMayor.identity.handle.split('.')[0],
-    assignee: assigneeAgent ? {
-      handle: assigneeAgent.def.handle.split('.')[0],
-      did: assigneeAgent.identity.did,
-      model: assigneeAgent.def.primaryModelSlug,
+    assignee: assigneeDid ? {
+      handle: assigneeHandle ?? assigneeDid.slice(-8),
+      did: assigneeDid,
+      model: assigneeAgent?.def.primaryModelSlug ?? 'unknown',
     } : null,
     posting,
     timeline,
@@ -491,12 +592,14 @@ function buildEventDetail(state: DemoState, seq: number) {
   const event = state.firehose.log.find((e) => e.seq === seq);
   if (!event) return null;
 
-  const agent = state.agents.find((a) => a.identity.did === event.did);
   const mayorEntry = state.mayors.find((m) => m.identity.did === event.did);
+  const handle = resolveAgentHandle(state, event.did)
+    ?? (mayorEntry ? mayorEntry.identity.handle.split('.')[0] : null);
+  const agent = state.agents.find((a) => a.identity.did === event.did);
 
   return {
     ...event,
-    authorHandle: agent ? agent.def.handle.split('.')[0] : mayorEntry ? mayorEntry.identity.handle.split('.')[0] : null,
+    authorHandle: handle,
     authorDisplayName: agent ? agent.def.displayName : mayorEntry ? mayorEntry.identity.displayName : null,
   };
 }
@@ -567,13 +670,27 @@ async function startServer(state: DemoState, port: number): Promise<void> {
 
   fastify.get('/api/reputation', async () => buildReputationList(state));
 
-  fastify.get('/api/status', async () => ({
-    tasksPosted: state.mayors.reduce((sum, m) => sum + m.postedTasks.size, 0),
-    tasksTotal: state.mayors.reduce((sum, m) => sum + m.template.tasks.length, 0),
-    tasksAccepted: state.mayors.reduce((sum, m) => sum + [...m.postedTasks.values()].filter((t) => t.status === 'accepted').length, 0),
-    firehoseEvents: state.firehose.log.length,
-    agents: state.agents.length,
-  }));
+  fastify.get('/api/status', async () => {
+    // Agent count: local agents for worker/full mode; agentRegistry size for orchestrator
+    const agentCount = state.isOrchestrator
+      ? (() => {
+          const seen = new Set<string>();
+          for (const mayor of state.mayors) {
+            for (const [did] of mayor.agentRegistry) seen.add(did);
+          }
+          return seen.size;
+        })()
+      : state.agents.length;
+
+    return {
+      mode: state.isOrchestrator ? 'orchestrator' : state.isWorker ? 'worker' : 'full',
+      tasksPosted: state.mayors.reduce((sum, m) => sum + m.postedTasks.size, 0),
+      tasksTotal: state.mayors.reduce((sum, m) => sum + m.template.tasks.length, 0),
+      tasksAccepted: state.mayors.reduce((sum, m) => sum + [...m.postedTasks.values()].filter((t) => t.status === 'accepted').length, 0),
+      firehoseEvents: state.firehose.log.length,
+      agents: agentCount,
+    };
+  });
 
   // ── REST API (detail) ─────────────────────────────────────────────────────
 
@@ -773,6 +890,10 @@ async function startServer(state: DemoState, port: number): Promise<void> {
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 console.log('🍄 Mycelium MVP — Dashboard Server');
+const modeLabel = isOrchestrator ? ' [orchestrator — dispatch center]'
+  : isWorker ? ' [worker — agent guild]'
+  : ' [full node]';
+console.log(`   Mode: ${modeLabel}`);
 console.log('   Bootstrapping demo state...');
 
 const state = await bootstrapDemo();
@@ -789,12 +910,24 @@ process.on('SIGTERM', shutdown);
 
 await startServer(state, CONSTANTS.DASHBOARD_PORT);
 
-// Kick off both projects — Mayor Alpha immediately, Mayor Beta with a 5s stagger
-console.log('🎯 Starting project: "Build the Mycelium Dashboard" (Mayor Alpha)');
-console.log('   Watch the real-time stream at http://localhost:3000\n');
-const [mayorAlpha, mayorBeta] = state.mayors;
-startProject(mayorAlpha, 'Build the Mycelium Dashboard');
-setTimeout(() => {
-  console.log('🎯 Starting project: "Build the AI Coordination Protocol" (Mayor Beta)');
-  startProject(mayorBeta, 'Build the AI Coordination Protocol');
-}, 5000);
+// Kick off projects only if we have mayors (orchestrator or full-node mode).
+// In orchestrator mode, delay 8s to let cursor=0 Jetstream replay settle so
+// agent profiles are registered before the first claim auction.
+if (state.mayors.length > 0) {
+  const projectDelay = state.isOrchestrator ? 8_000 : 0;
+  setTimeout(() => {
+    const [mayorAlpha, mayorBeta] = state.mayors;
+    console.log('🎯 Starting project: "Build the Mycelium Dashboard" (Mayor Alpha)');
+    console.log('   Watch the real-time stream at http://localhost:3000\n');
+    startProject(mayorAlpha, 'Build the Mycelium Dashboard');
+    setTimeout(() => {
+      console.log('🎯 Starting project: "Build the AI Coordination Protocol" (Mayor Beta)');
+      startProject(mayorBeta, 'Build the AI Coordination Protocol');
+    }, 5000);
+  }, projectDelay);
+  if (state.isOrchestrator && projectDelay > 0) {
+    console.log(`⏳ Waiting ${projectDelay / 1000}s for Jetstream replay before starting projects...`);
+  }
+} else {
+  console.log('ℹ️  Worker mode: no mayors to start projects — listening for tasks via Jetstream');
+}

@@ -12,6 +12,8 @@
     "test:watch": "vitest",
     "demo": "tsx --no-warnings src/demo/run.ts",
     "dashboard": "tsx --no-warnings src/demo/dashboard/server.ts",
+    "orchestrator": "tsx --no-warnings src/demo/dashboard/server.ts --orchestrator",
+    "agent-worker": "tsx --no-warnings src/demo/dashboard/server.ts --worker",
     "reset": "tsx --no-warnings scripts/reset.ts",
     "query": "tsx --no-warnings scripts/query.ts",
     "pds-init": "tsx --no-warnings scripts/pds-init.ts"

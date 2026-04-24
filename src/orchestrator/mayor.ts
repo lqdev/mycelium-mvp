@@ -260,17 +260,26 @@ function handleFirehoseEvent(
     if (event.did === mayor.identity.did) return;
 
     const profile = event.record as AgentProfile;
-    const existing = mayor.agentRegistry.get(event.did);
+    // Agents may have two identities: event.did is the PDS did:plc (repo DID),
+    // while profile.did is the signing did:key (used in claims as claimerDid).
+    // Register under both so claim lookups by claimerDid (did:key) resolve correctly.
+    const existing = mayor.agentRegistry.get(event.did)
+      ?? (profile.did && profile.did !== event.did ? mayor.agentRegistry.get(profile.did) : undefined);
     if (existing) {
       existing.handle = profile.handle;
     } else {
-      mayor.agentRegistry.set(event.did, {
+      const entry = {
         did: event.did,
         handle: profile.handle,
         capabilities: [],
         activeTasks: [],
         reputation: null,
-      });
+      };
+      mayor.agentRegistry.set(event.did, entry);
+      // Also index under the signing did:key so processClaimsForTask can find it
+      if (profile.did && profile.did !== event.did) {
+        mayor.agentRegistry.set(profile.did, entry);
+      }
     }
   } else if (event.collection === 'network.mycelium.agent.capability') {
     const cap = event.record as AgentCapability;
