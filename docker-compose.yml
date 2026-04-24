@@ -63,7 +63,7 @@ services:
   #   JETSTREAM_ENDPOINT=ws://jetstream:6008/subscribe \
   #   docker compose --profile pds --profile jetstream up
   jetstream:
-    image: ghcr.io/bluesky-social/jetstream:latest
+    image: ghcr.io/bluesky-social/jetstream:sha-8a65de4
     profiles: ["jetstream"]
     ports:
       - "6008:6008"
