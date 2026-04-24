@@ -164,7 +164,7 @@ curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collect
 
 ### Level 4 — Two-Node Federation
 
-Spin up two fully independent Mycelium nodes. Each node has its own Mayor, PDS, and Jetstream relay. Agents from Node B can claim and execute tasks posted by Node A's Mayor, and vice versa. Cursor persistence ensures each node resumes from its last known Jetstream position after a restart.
+Spin up two complementary Mycelium nodes in a true orchestrator/worker split. Node A runs mayors only (the "Dispatch Center") and Node B runs agents only (the "Agent Guild"). Node A posts tasks; Node B agents discover, claim, and complete them via Jetstream. Every stamp issued by a Node A Mayor for work done by a Node B agent is proof the cross-node loop closed.
 
 ```bash
 # Generate secrets for both nodes (run once per node)
@@ -177,18 +177,53 @@ export PDS_A_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.a | cut -d= -f
 export PDS_B_ADMIN_PASSWORD=$(grep PDS_ADMIN_PASSWORD .env.docker.b | cut -d= -f2)
 
 # PowerShell:
-# $env:PDS_A_ADMIN_PASSWORD = (Get-Content .env.docker.a | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
-# $env:PDS_B_ADMIN_PASSWORD = (Get-Content .env.docker.b | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+$env:PDS_A_ADMIN_PASSWORD = (Get-Content .env.docker.a | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
+$env:PDS_B_ADMIN_PASSWORD = (Get-Content .env.docker.b | ForEach-Object { if ($_ -match '^PDS_ADMIN_PASSWORD=(.+)$') { $matches[1] } })
 
 # Start both nodes
 docker compose -f docker-compose.federation.yml up
 ```
 
 Dashboards:
-- **Node A** (Mayor Alpha — Build the Mycelium Dashboard): http://localhost:3000
-- **Node B** (Mayor Beta — Build the AI Coordination Protocol): http://localhost:3001
+- **Node A — Dispatch Center** (mayors only, task board): http://localhost:3000
+- **Node B — Agent Guild** (workers only, agent activity): http://localhost:3001
 
-> **Note (Phase 14a + 14b, shipped)**: Mayor records (task postings, assignments, reputation stamps) now mirror to the PDS and travel cross-node via Jetstream. Each Mayor gets a real `did:plc` account alongside agents. Cross-node task discovery is fully operational — agents on Node B can claim and complete tasks posted by Node A's Mayor.
+#### Validating Federation
+
+After both nodes are up and running for ~30 seconds, use the PowerShell scripts in `scripts/` to prove the cross-node loop is working:
+
+```powershell
+# Quick health check — confirms both nodes are up and API is responding
+scripts\fed-health.ps1
+
+# Show tasks on both nodes — look for the same task URIs on both nodes
+scripts\fed-tasks.ps1
+
+# THE KILLER SIGNAL: cross-node reputation stamps
+# A stamp where the issuerDid (Mayor on Node A) stamped a subjectDid (agent on Node B)
+# proves the full cross-node loop: task posted → claimed → executed → stamped
+scripts\fed-stamps.ps1
+
+# Compare firehose event counts across nodes
+scripts\fed-firehose.ps1
+
+# Run all checks at once
+scripts\fed-validate.ps1
+```
+
+**Healthy output from `fed-stamps.ps1`:**
+```
+Cross-Node Stamps (issuer node ≠ subject node):
+uri                     issuerNode  subjectNode  subject
+at://did:plc:.../...    A           B            atlas
+at://did:plc:.../...    A           B            beacon
+
+✅ 2 cross-node stamps — full federation loop proven
+```
+
+If you see zero cross-node stamps after a minute, check `fed-firehose.ps1` — both nodes should have different event sets (Node A: task postings; Node B: claims and completions).
+
+> **Note**: Nodes use `--orchestrator` / `--worker` flags added in Phase 15e. You can also run these modes manually: `npm run orchestrator` and `npm run agent-worker`.
 
 ---
 
