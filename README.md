@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 348 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation
+> **Status:** MVP — 359 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation
 
 ---
 
@@ -188,7 +188,7 @@ Dashboards:
 - **Node A** (Mayor Alpha — Build the Mycelium Dashboard): http://localhost:3000
 - **Node B** (Mayor Beta — Build the AI Coordination Protocol): http://localhost:3001
 
-> **Note (Phase 14a, shipped)**: Mayor records (task postings, assignments, reputation stamps) now mirror to the PDS and travel cross-node via Jetstream. Each Mayor gets a real `did:plc` account alongside agents.
+> **Note (Phase 14a + 14b, shipped)**: Mayor records (task postings, assignments, reputation stamps) now mirror to the PDS and travel cross-node via Jetstream. Each Mayor gets a real `did:plc` account alongside agents. Cross-node task discovery is fully operational — agents on Node B can claim and complete tasks posted by Node A's Mayor.
 
 ---
 
@@ -294,7 +294,7 @@ The dashboard shows live SSE events, agent profiles, task timelines, and reputat
 ## Testing
 
 ```bash
-npm test            # run all 348 tests once
+npm test            # run all 359 tests once
 npm run test:watch  # watch mode
 ```
 
@@ -317,5 +317,6 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client
-- **Phase 14b** — Cross-node task discovery: Node B agents claim tasks posted by Node A Mayor via Jetstream, completing the full federation loop
+- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route already exists; needs a registered domain)
+- **Production hardening** — Rate limiting, error recovery, structured logging, health check endpoints
+- **Trust model depth** — Cross-Mayor reputation portability; observer nodes that aggregate stamps from multiple Mayors
