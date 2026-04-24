@@ -188,7 +188,7 @@ Dashboards:
 - **Node A** (Mayor Alpha — Build the Mycelium Dashboard): http://localhost:3000
 - **Node B** (Mayor Beta — Build the AI Coordination Protocol): http://localhost:3001
 
-> **Known limitations (MVP)**: Mayor records are not yet mirrored to the PDS, so only agent-authored records (claims, completions) travel cross-node via Jetstream. Full Mayor ↔ Mayor federation (cross-node task posting) requires Phase 14 work.
+> **Note (Phase 14a, shipped)**: Mayor records (task postings, assignments, reputation stamps) now mirror to the PDS and travel cross-node via Jetstream. Each Mayor gets a real `did:plc` account alongside agents.
 
 ---
 
@@ -318,4 +318,4 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 ## What's Next
 
 - **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client
-- **Phase 14** — Full Mayor ↔ Mayor federation: mirror Mayor repos to PDS so task postings travel cross-node via Jetstream without requiring shared process state
+- **Phase 14b** — Cross-node task discovery: Node B agents claim tasks posted by Node A Mayor via Jetstream, completing the full federation loop
