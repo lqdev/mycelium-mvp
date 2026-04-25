@@ -48,15 +48,37 @@ const PUBLIC_DIR = join(__dirname, 'public');
 
 // ─── Bootstrap state ──────────────────────────────────────────────────────────
 
+interface NetworkParticipant {
+  type: 'user' | 'agent' | 'mayor' | 'tool' | 'knowledge';
+  did: string;
+  handle: string;
+  displayName: string;
+  // agent
+  model?: string;
+  description?: string;
+  capabilities?: Array<{ name: string; domain: string; proficiency: string }>;
+  reputation?: AggregatedReputation | null;
+  // user
+  taskPostingCount?: number;
+  taskReviewCount?: number;
+  // mayor
+  tasksManaged?: number;
+  tasksAccepted?: number;
+  // tool / knowledge
+  itemCount?: number;
+}
+
 interface DemoState {
   firehose: Firehose;
   mayor: Mayor;
   mayorRepo: AgentRepository;
+  mayorDid: string;
   customerRepo: AgentRepository;
   customerDid: string;
   agents: BootstrappedAgent[];
   kbProviders: BootstrappedKnowledgeProvider[];
   toolProviders: BootstrappedToolProvider[];
+  participants: NetworkParticipant[];
   dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
 }
 
@@ -158,7 +180,42 @@ async function bootstrapDemo(): Promise<DemoState> {
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, customerRepo, customerDid: customerIdentity.did, agents, kbProviders, toolProviders, dbInstance };
+  const participants: NetworkParticipant[] = [
+    {
+      type: 'user',
+      did: customerIdentity.did,
+      handle: 'customer',
+      displayName: 'Customer (Task Requester)',
+    },
+    {
+      type: 'mayor',
+      did: mayorIdentity.did,
+      handle: 'mayor',
+      displayName: 'Mayor (Orchestrator)',
+    },
+    ...agents.map(({ def, identity }) => ({
+      type: 'agent' as const,
+      did: identity.did,
+      handle: def.handle.split('.')[0],
+      displayName: def.displayName,
+      model: def.primaryModelSlug,
+      description: def.description,
+    })),
+    ...toolProviders.map((tp) => ({
+      type: 'tool' as const,
+      did: tp.identity.did,
+      handle: tp.provider.name.toLowerCase().replace(/\s+/g, '-'),
+      displayName: tp.provider.name,
+    })),
+    ...kbProviders.map((kb) => ({
+      type: 'knowledge' as const,
+      did: kb.identity.did,
+      handle: kb.provider.name.toLowerCase().replace(/\s+/g, '-'),
+      displayName: kb.provider.name,
+    })),
+  ];
+
+  return { firehose, mayor, mayorRepo, mayorDid: mayorIdentity.did, customerRepo, customerDid: customerIdentity.did, agents, kbProviders, toolProviders, participants, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -242,6 +299,53 @@ function buildReputationList(state: DemoState): AggregatedReputation[] {
     const stamps = getStampsForAgent(state.firehose, identity.did);
     if (stamps.length === 0) return [];
     return [aggregateReputation(stamps)];
+  });
+}
+
+function buildParticipantList(state: DemoState): NetworkParticipant[] {
+  return state.participants.map((p) => {
+    if (p.type === 'agent') {
+      const agent = state.agents.find((a) => a.identity.did === p.did);
+      if (!agent) return p;
+      const caps = listRecords(agent.repo, 'network.mycelium.agent.capability').map(
+        (r) => r.content as AgentCapability,
+      );
+      const stamps = getStampsForAgent(state.firehose, p.did);
+      const reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
+      return {
+        ...p,
+        capabilities: caps.map((c) => ({ name: c.name, domain: c.domain, proficiency: c.proficiencyLevel })),
+        reputation,
+      };
+    }
+
+    if (p.type === 'user') {
+      const taskPostingCount = state.firehose.log.filter(
+        (e) => e.did === p.did && e.collection === 'network.mycelium.task.posting',
+      ).length;
+      const taskReviewCount = state.firehose.log.filter(
+        (e) => e.did === p.did && e.collection === 'network.mycelium.task.review',
+      ).length;
+      return { ...p, taskPostingCount, taskReviewCount };
+    }
+
+    if (p.type === 'mayor') {
+      const tasksManaged = state.mayor.postedTasks.size;
+      const tasksAccepted = [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length;
+      return { ...p, tasksManaged, tasksAccepted };
+    }
+
+    if (p.type === 'tool') {
+      const tp = state.toolProviders.find((t) => t.identity.did === p.did);
+      return { ...p, itemCount: tp?.definitions.length ?? 0 };
+    }
+
+    if (p.type === 'knowledge') {
+      const kb = state.kbProviders.find((k) => k.identity.did === p.did);
+      return { ...p, itemCount: kb?.documentUris.size ?? 0 };
+    }
+
+    return p;
   });
 }
 
@@ -495,6 +599,8 @@ async function startServer(state: DemoState, port: number): Promise<void> {
 
   fastify.get('/api/agents', async () => buildAgentList(state));
 
+  fastify.get('/api/participants', async () => buildParticipantList(state));
+
   fastify.get('/api/tasks', async () => buildTaskList(state));
 
   fastify.get('/api/firehose', async () => ({
@@ -510,6 +616,9 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     tasksAccepted: [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length,
     firehoseEvents: state.firehose.log.length,
     agents: state.agents.length,
+    participants: state.participants.length,
+    customerDid: state.customerDid,
+    mayorDid: state.mayorDid,
     knowledgeProviders: state.kbProviders.map((kb) => ({
       did: kb.identity.did,
       name: kb.provider.name,

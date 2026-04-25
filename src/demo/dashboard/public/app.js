@@ -7,6 +7,7 @@
 
 const state = {
   agents: [],
+  participants: [],
   tasks: [],
   firehoseEvents: [],
   reputation: [],
@@ -81,6 +82,23 @@ function formatSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
+function resolveHandle(did) {
+  if (!did) return shortDid(did);
+  const p = state.participants.find((x) => x.did === did);
+  return p ? p.handle : shortDid(did);
+}
+
+function classifyDid(did) {
+  if (!did) return 'other';
+  const p = state.participants.find((x) => x.did === did);
+  return p ? p.type : 'other';
+}
+
+function participantEmoji(type) {
+  const map = { user: '👤', agent: '🤖', mayor: '🏛️', tool: '🔧', knowledge: '📚' };
+  return map[type] || '●';
+}
+
 function esc(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -89,8 +107,119 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-// ── Render: Agent Registry ────────────────────────────────────────────────────
+// ── Render: Network Participants ──────────────────────────────────────────────
 
+function renderParticipantCard(p) {
+  const badge = `<span class="type-badge type-${esc(p.type)}">${participantEmoji(p.type)}</span>`;
+
+  if (p.type === 'agent') {
+    const caps = (p.capabilities || []).slice(0, 5);
+    const rep = p.reputation;
+    const score = rep ? Math.round(rep.overallScore) : null;
+    const trust = rep ? rep.trustLevel : 'newcomer';
+    return `
+      <div class="participant-card agent-card" role="button" tabindex="0"
+           onclick="openDetail('agent','${esc(p.handle)}')"
+           onkeydown="if(event.key==='Enter')openDetail('agent','${esc(p.handle)}')">
+        <div class="agent-header">
+          ${badge}
+          <span class="agent-handle">${esc(p.handle)}</span>
+          <span class="agent-model">${esc(p.model)}</span>
+        </div>
+        <div class="agent-did">${esc(shortDid(p.did))}</div>
+        <div class="caps">
+          ${caps.map((c) => `<span class="cap-tag ${esc(c.proficiency)}" title="${esc(c.domain)}">${esc(c.name)}</span>`).join('')}
+        </div>
+        ${score !== null ? `
+          <div class="agent-rep-mini">
+            <span class="score-num">${score}</span><span>/100</span>
+            <span class="trust-badge ${esc(trust)}" style="display:inline-block">${esc(trust)}</span>
+          </div>
+        ` : '<div class="agent-rep-mini" style="color:var(--muted)">no stamps yet</div>'}
+      </div>
+    `;
+  }
+
+  if (p.type === 'user') {
+    return `
+      <div class="participant-card">
+        <div class="agent-header">
+          ${badge}
+          <span class="agent-handle">${esc(p.handle)}</span>
+          <span style="color:var(--muted);font-size:11px">Task Requester</span>
+        </div>
+        <div class="agent-did">${esc(shortDid(p.did))}</div>
+        <div class="agent-rep-mini">
+          <span>📋 ${p.taskPostingCount || 0} task${(p.taskPostingCount || 0) !== 1 ? 's' : ''} posted</span>
+          <span style="color:var(--border)">·</span>
+          <span>✍️ ${p.taskReviewCount || 0} review${(p.taskReviewCount || 0) !== 1 ? 's' : ''}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  if (p.type === 'mayor') {
+    return `
+      <div class="participant-card">
+        <div class="agent-header">
+          ${badge}
+          <span class="agent-handle">${esc(p.handle)}</span>
+          <span style="color:var(--muted);font-size:11px">Orchestrator</span>
+        </div>
+        <div class="agent-did">${esc(shortDid(p.did))}</div>
+        <div class="agent-rep-mini">
+          <span>🗂️ ${p.tasksManaged || 0} managed</span>
+          <span style="color:var(--border)">·</span>
+          <span>✅ ${p.tasksAccepted || 0} accepted</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // tool / knowledge
+  return `
+    <div class="participant-card">
+      <div class="agent-header">
+        ${badge}
+        <span class="agent-handle">${esc(p.displayName || p.handle)}</span>
+      </div>
+      <div class="agent-did">${esc(shortDid(p.did))}</div>
+      <div class="agent-rep-mini" style="color:var(--muted)">
+        ${p.itemCount || 0} ${p.type === 'tool' ? 'tool' : 'document'}${(p.itemCount || 0) !== 1 ? 's' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderParticipants() {
+  const container = document.getElementById('agents-list');
+  if (!container) return;
+
+  if (state.participants.length === 0) {
+    container.innerHTML = '<div class="placeholder">Bootstrapping network…</div>';
+    return;
+  }
+
+  const groups = [
+    { type: 'user',      label: 'Human Users' },
+    { type: 'mayor',     label: 'Orchestrator' },
+    { type: 'agent',     label: 'AI Agents' },
+    { type: 'tool',      label: 'Tool Providers' },
+    { type: 'knowledge', label: 'Knowledge Providers' },
+  ];
+
+  const html = [];
+  for (const { type, label } of groups) {
+    const members = state.participants.filter((p) => p.type === type);
+    if (members.length === 0) continue;
+    html.push(`<div class="participant-group-header">${participantEmoji(type)} ${esc(label)}</div>`);
+    for (const p of members) html.push(renderParticipantCard(p));
+  }
+
+  container.innerHTML = html.join('');
+}
+
+// Keep renderAgents() for internal use by the reputation panel (state.agents still populated separately)
 function renderAgents() {
   const container = document.getElementById('agents-list');
   if (!container) return;
@@ -179,13 +308,17 @@ function renderFirehoseEvent(event) {
   if (!firehoseContainer) return;
 
   const kind = classifyCollection(event.collection);
+  const participantType = classifyDid(event.did);
 
   // Apply filter
-  if (state.filter !== 'all' && kind !== state.filter) return;
+  if (state.filter === 'user') {
+    if (participantType !== 'user') return;
+  } else if (state.filter !== 'all' && kind !== state.filter) return;
 
   const row = document.createElement('div');
   row.className = 'event-row';
   row.dataset.kind = kind;
+  row.dataset.participantType = participantType;
   row.setAttribute('role', 'button');
   row.setAttribute('tabindex', '0');
   row.onclick = () => openDetail('event', event.seq);
@@ -220,13 +353,17 @@ function describeEvent(event) {
     return `${event.operation} capability — ${record.name ?? event.rkey} (${record.proficiencyLevel ?? '?'})`;
   }
   if (col === 'network.mycelium.task.posting') {
-    return `${event.operation} task — "${record.title ?? event.rkey}" [${record.status ?? '?'}]`;
+    const poster = resolveHandle(event.did);
+    return `${event.operation} task — "${record.title ?? event.rkey}" [${record.status ?? '?'}] by ${poster}`;
   }
   if (col === 'network.mycelium.task.claim') {
     return `${event.operation} claim — "${record.taskTitle ?? '?'}" (${record.proposal?.confidenceLevel ?? '?'})`;
   }
   if (col === 'network.mycelium.task.completion') {
-    return `${event.operation} completion — task done by ${shortDid(record.completerDid ?? event.did)}`;
+    return `${event.operation} completion — task done by ${resolveHandle(record.completerDid ?? event.did)}`;
+  }
+  if (col === 'network.mycelium.task.review') {
+    return `${event.operation} review — ${record.outcome ?? '?'} (score: ${record.score ?? '?'}) by ${resolveHandle(event.did)}`;
   }
   if (col === 'network.mycelium.reputation.stamp') {
     return `${event.operation} stamp — ${record.taskDomain ?? '?'} score: ${Math.round(record.overallScore ?? 0)}`;
@@ -334,18 +471,20 @@ function renderReputation() {
 
 async function fetchAll() {
   try {
-    const [agents, tasks, reputation, status] = await Promise.all([
+    const [participants, agents, tasks, reputation, status] = await Promise.all([
+      fetch('/api/participants').then((r) => r.json()),
       fetch('/api/agents').then((r) => r.json()),
       fetch('/api/tasks').then((r) => r.json()),
       fetch('/api/reputation').then((r) => r.json()),
       fetch('/api/status').then((r) => r.json()),
     ]);
 
+    state.participants = participants;
     state.agents = agents;
     state.tasks = tasks;
     state.reputation = reputation;
 
-    renderAgents();
+    renderParticipants();
     renderTasks();
     renderReputation();
     updateStatusBar(status);
@@ -358,7 +497,7 @@ function updateStatusBar(status) {
   const el = (id) => document.getElementById(id);
   if (status) {
     el('task-progress').textContent = `${status.tasksAccepted}/${status.tasksTotal} tasks`;
-    el('agent-count').textContent = `${status.agents} agents`;
+    el('participant-count').textContent = `${status.participants} participants`;
     el('event-count').textContent = `${status.firehoseEvents} events`;
   }
 }
@@ -421,8 +560,16 @@ function initFilters() {
       if (!container) return;
       container.querySelectorAll('.event-row').forEach((row) => {
         const kind = row.dataset.kind ?? '';
-        row.style.display =
-          state.filter === 'all' || kind === state.filter ? '' : 'none';
+        const pt = row.dataset.participantType ?? '';
+        let visible;
+        if (state.filter === 'all') {
+          visible = true;
+        } else if (state.filter === 'user') {
+          visible = pt === 'user';
+        } else {
+          visible = kind === state.filter;
+        }
+        row.style.display = visible ? '' : 'none';
       });
     });
   });
