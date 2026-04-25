@@ -40,6 +40,14 @@ export const CONSTANTS = {
   REPUTATION_DOMAIN_MATCH:    1.0,   // Stamp domain matches query domain
   REPUTATION_DOMAIN_OTHER:    0.7,   // Stamp domain does not match
 
+  // Attestor type weighting (multi-attestor trust)
+  REPUTATION_ATTESTOR_WEIGHTS: {
+    mayor:     0.40,
+    requester: 0.35,
+    peer:      0.20,
+    verifier:  0.05,
+  },
+
   // ─── Trust Level Thresholds ───────────────────────────────────────────
   TRUST_LEVELS: {
     newcomer:    { minTasks: 0,  minAvgScore: 0  },

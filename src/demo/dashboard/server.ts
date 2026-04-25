@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { createFirehose, subscribe, unsubscribe } from '../../firehose/index.js';
 import { bootstrapIntelligence } from '../../intelligence/index.js';
 import { bootstrapAgents, createAgentRunner } from '../../agents/engine.js';
-import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../../orchestrator/mayor.js';
+import { createMayor, DASHBOARD_TEMPLATE } from '../../orchestrator/mayor.js';
 import { generateIdentity } from '../../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../../reputation/index.js';
@@ -23,6 +23,7 @@ import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
 import { initJetstream } from '../../atproto/jetstream.js';
 import { bootstrapKnowledgeProviders, type BootstrappedKnowledgeProvider } from '../../knowledge/index.js';
 import { bootstrapToolProviders, type BootstrappedToolProvider } from '../../tools/index.js';
+import { postTask, writeReview } from '../../orchestrator/wanted-board.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -51,6 +52,8 @@ interface DemoState {
   firehose: Firehose;
   mayor: Mayor;
   mayorRepo: AgentRepository;
+  customerRepo: AgentRepository;
+  customerDid: string;
   agents: BootstrappedAgent[];
   kbProviders: BootstrappedKnowledgeProvider[];
   toolProviders: BootstrappedToolProvider[];
@@ -86,6 +89,9 @@ async function bootstrapDemo(): Promise<DemoState> {
   const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
   const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+
+  const customerIdentity = generateIdentity('customer.mycelium.local', 'Customer (Task Requester)');
+  const customerRepo = createMemoryRepository(customerIdentity, firehose);
 
   const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
 
@@ -152,7 +158,7 @@ async function bootstrapDemo(): Promise<DemoState> {
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, agents, kbProviders, toolProviders, dbInstance };
+  return { firehose, mayor, mayorRepo, customerRepo, customerDid: customerIdentity.did, agents, kbProviders, toolProviders, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -733,4 +739,35 @@ await startServer(state, CONSTANTS.DASHBOARD_PORT);
 // Kick off the demo project after server is ready
 console.log('🎯 Starting project: "Build the Mycelium Dashboard"');
 console.log('   Watch the real-time stream at http://localhost:3000\n');
-startProject(state.mayor, 'Build the Mycelium Dashboard');
+// Kick off the demo project after server is ready — customer posts the project-level task
+console.log('🎯 Starting project: "Build the Mycelium Dashboard"');
+console.log('   Watch the real-time stream at http://localhost:3000\n');
+
+const { uri: customerTaskUri } = postTask(state.customerRepo, {
+  title: DASHBOARD_TEMPLATE.projectPattern,
+  description: 'Build the Mycelium Dashboard — a full-stack federated agent orchestration UI.',
+  requiredCapabilities: [{ domain: 'project-management', tags: [], minProficiency: 'expert' }],
+  complexity: 'high',
+  priority: 'high',
+  requesterDid: state.customerDid,
+  context: { projectName: DASHBOARD_TEMPLATE.projectPattern, projectDescription: 'Top-level customer request.' },
+  deliverables: [],
+});
+
+// After all subtasks complete, customer writes a formal review
+let reviewWritten = false;
+const reviewInterval = setInterval(() => {
+  const total = DASHBOARD_TEMPLATE.tasks.length;
+  const accepted = [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length;
+  if (accepted >= total && !reviewWritten) {
+    reviewWritten = true;
+    clearInterval(reviewInterval);
+    writeReview(state.customerRepo, {
+      taskUri: customerTaskUri,
+      reviewerDid: state.customerDid,
+      outcome: 'accepted',
+      score: 85,
+      comment: `All ${total} subtasks delivered.`,
+    });
+  }
+}, 1000);

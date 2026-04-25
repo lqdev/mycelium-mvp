@@ -294,3 +294,109 @@ describe('shouldClaim()', () => {
     expect(shouldClaim(agentCaps, noTagMatch as Parameters<typeof shouldClaim>[1])).toBe(false);
   });
 });
+
+// ─── discoverTasks ────────────────────────────────────────────────────────────
+
+import { discoverTasks, writeReview } from './wanted-board.js';
+
+const NOW = '2026-01-01T00:00:00.000Z';
+const TASK_URI = 'at://did:key:z6MkPoster/network.mycelium.task.posting/task-1';
+
+const TASK_POSTING_RECORD = {
+  $type: 'network.mycelium.task.posting',
+  title: 'Build dashboard',
+  description: 'A full-stack UI',
+  requiredCapabilities: [{ domain: 'frontend', tags: ['react'], minProficiency: 'advanced' }],
+  complexity: 'medium',
+  priority: 'high',
+  status: 'open',
+  claimUris: [],
+  context: { projectName: 'P', projectDescription: 'D' },
+  deliverables: [],
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+describe('discoverTasks()', () => {
+  it('returns empty array for empty firehose log', () => {
+    expect(discoverTasks([])).toHaveLength(0);
+  });
+
+  it('discovers task.posting events from any DID', () => {
+    const log = [
+      { uri: TASK_URI, did: 'did:key:z6MkPoster', collection: 'network.mycelium.task.posting', rkey: 'task-1', record: TASK_POSTING_RECORD, seq: 1, type: 'commit' as const, operation: 'create' as const, timestamp: NOW },
+    ];
+    const tasks = discoverTasks(log);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.posterDid).toBe('did:key:z6MkPoster');
+    expect(tasks[0]!.uri).toBe(TASK_URI);
+  });
+
+  it('deduplicates by URI — latest event wins', () => {
+    const record2 = { ...TASK_POSTING_RECORD, status: 'claimed' };
+    const log = [
+      { uri: TASK_URI, did: 'did:key:z6MkPoster', collection: 'network.mycelium.task.posting', rkey: 'task-1', record: TASK_POSTING_RECORD, seq: 1, type: 'commit' as const, operation: 'create' as const, timestamp: NOW },
+      { uri: TASK_URI, did: 'did:key:z6MkPoster', collection: 'network.mycelium.task.posting', rkey: 'task-1', record: record2, seq: 2, type: 'commit' as const, operation: 'update' as const, timestamp: NOW },
+    ];
+    const tasks = discoverTasks(log);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.task.status).toBe('claimed');
+  });
+
+  it('filters by status when statusFilter is provided', () => {
+    const TASK_URI_2 = 'at://did:key:z6MkPoster/network.mycelium.task.posting/task-2';
+    const record2 = { ...TASK_POSTING_RECORD, status: 'accepted' };
+    const log = [
+      { uri: TASK_URI, did: 'did:key:z6MkPoster', collection: 'network.mycelium.task.posting', rkey: 'task-1', record: TASK_POSTING_RECORD, seq: 1, type: 'commit' as const, operation: 'create' as const, timestamp: NOW },
+      { uri: TASK_URI_2, did: 'did:key:z6MkPoster', collection: 'network.mycelium.task.posting', rkey: 'task-2', record: record2, seq: 2, type: 'commit' as const, operation: 'create' as const, timestamp: NOW },
+    ];
+    const openTasks = discoverTasks(log, 'open');
+    expect(openTasks).toHaveLength(1);
+    expect(openTasks[0]!.uri).toBe(TASK_URI);
+  });
+
+  it('ignores non-task.posting events', () => {
+    const log = [
+      { uri: 'at://did:key:z6Mk/network.mycelium.reputation.stamp/s1', did: 'did:key:z6Mk', collection: 'network.mycelium.reputation.stamp', rkey: 's1', record: {}, seq: 1, type: 'commit' as const, operation: 'create' as const, timestamp: NOW },
+    ];
+    expect(discoverTasks(log)).toHaveLength(0);
+  });
+});
+
+// ─── writeReview ──────────────────────────────────────────────────────────────
+
+describe('writeReview()', () => {
+  it('writes a task.review record to the requester repo', () => {
+    const requesterIdentity = generateIdentity('requester.local', 'Requester');
+    const firehose = createFirehose();
+    const requesterRepo = createMemoryRepository(requesterIdentity, firehose);
+    const { uri, rkey } = writeReview(requesterRepo, {
+      taskUri: TASK_URI,
+      reviewerDid: requesterIdentity.did,
+      outcome: 'accepted',
+      score: 85,
+      comment: 'Great work!',
+    });
+    expect(uri).toContain('network.mycelium.task.review');
+    expect(rkey).toMatch(/^review-/);
+    // Verify it appears in the firehose
+    const reviewEvent = firehose.log.find(e => e.collection === 'network.mycelium.task.review');
+    expect(reviewEvent).toBeDefined();
+    expect((reviewEvent!.record as { score: number }).score).toBe(85);
+  });
+
+  it('writes a rejection review', () => {
+    const requesterIdentity = generateIdentity('requester.local', 'Requester');
+    const firehose = createFirehose();
+    const requesterRepo = createMemoryRepository(requesterIdentity, firehose);
+    const { uri } = writeReview(requesterRepo, {
+      taskUri: TASK_URI,
+      reviewerDid: requesterIdentity.did,
+      outcome: 'rejected',
+      score: 20,
+    });
+    expect(uri).toContain('network.mycelium.task.review');
+    const reviewEvent = firehose.log.find(e => e.collection === 'network.mycelium.task.review');
+    expect((reviewEvent!.record as { outcome: string }).outcome).toBe('rejected');
+  });
+});

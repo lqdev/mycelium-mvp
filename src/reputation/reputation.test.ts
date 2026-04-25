@@ -41,13 +41,13 @@ const POOR_DIMS: ReputationDimensions = {
   efficiency: 4,
 };
 
-function makeStamp(dims: ReputationDimensions, subjectDid: string, domain = 'backend', overallScore?: number): ReputationStamp {
+function makeStamp(dims: ReputationDimensions, subjectDid: string, domain = 'backend', overallScore?: number, taskUri?: string): ReputationStamp {
   const score = overallScore ?? (dims.codeQuality * 0.30 + dims.reliability * 0.25 + dims.efficiency * 0.20 + dims.communication * 0.15 + dims.creativity * 0.10) * 10;
   return {
     $type: 'network.mycelium.reputation.stamp',
     subjectDid,
     attestorDid: 'did:key:z6MkAttestor',
-    taskUri: 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-1',
+    taskUri: taskUri ?? 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-1',
     completionUri: 'at://did:key:z6MkAgent/network.mycelium.task.completion/comp-1',
     taskDomain: domain,
     dimensions: dims,
@@ -185,11 +185,25 @@ describe('aggregateReputation()', () => {
     expect(agg.recentTrend).toBe('stable');
   });
 
-  it('correctly counts totalTasks', () => {
+  it('correctly counts totalTasks (unique task URIs)', () => {
     const subjectDid = 'did:key:z6MkAgent';
-    const stamps = [makeStamp(GOOD_DIMS, subjectDid), makeStamp(GOOD_DIMS, subjectDid)];
+    const stamps = [
+      makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-1'),
+      makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-2'),
+    ];
     const agg = aggregateReputation(stamps);
     expect(agg.totalTasks).toBe(2);
+  });
+
+  it('counts duplicate taskUri stamps as one task (multi-attestor)', () => {
+    const subjectDid = 'did:key:z6MkAgent';
+    const taskUri = 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-1';
+    const stamps = [
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, taskUri), attestorType: 'mayor' as const },
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, taskUri), attestorType: 'requester' as const },
+    ];
+    const agg = aggregateReputation(stamps);
+    expect(agg.totalTasks).toBe(1);
   });
 
   it('populates taskBreakdown per domain', () => {
@@ -273,14 +287,95 @@ describe('rankClaims()', () => {
   it('does NOT disqualify established+ agents from high-complexity tasks', () => {
     const highTask = { ...task, complexity: 'high' as const };
     const establishedRep = aggregateReputation([
-      makeStamp(GOOD_DIMS, 'did:key:E'),
-      makeStamp(GOOD_DIMS, 'did:key:E'),
-      makeStamp(GOOD_DIMS, 'did:key:E'),
+      makeStamp(GOOD_DIMS, 'did:key:E', 'backend', undefined, 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-e1'),
+      makeStamp(GOOD_DIMS, 'did:key:E', 'backend', undefined, 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-e2'),
+      makeStamp(GOOD_DIMS, 'did:key:E', 'backend', undefined, 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-e3'),
     ]);
     const candidates: ClaimCandidate[] = [
       { did: 'did:key:E', claim: { proposal: { confidenceLevel: 'high' } }, capabilities: [backendCap], activeTasks: 0, reputation: establishedRep },
     ];
     const ranked = rankClaims(candidates, highTask);
     expect(ranked[0]!.rankScore).toBeGreaterThan(0);
+  });
+});
+
+// ─── createStamp — attestorType ───────────────────────────────────────────────
+
+describe('createStamp() attestorType', () => {
+  it('defaults to undefined when attestorType is not provided', () => {
+    const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
+    const { stamp } = createStamp(
+      repo, 'did:key:z6MkSubject',
+      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      'backend', GOOD_DIMS,
+    );
+    expect(stamp.attestorType).toBeUndefined();
+  });
+
+  it('stores attestorType: requester when explicitly provided', () => {
+    const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
+    const { stamp } = createStamp(
+      repo, 'did:key:z6MkSubject',
+      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      'backend', GOOD_DIMS,
+      undefined, 0, undefined, undefined, 'requester',
+    );
+    expect(stamp.attestorType).toBe('requester');
+  });
+
+  it('stores attestorType: mayor when explicitly provided', () => {
+    const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
+    const { stamp } = createStamp(
+      repo, 'did:key:z6MkSubject',
+      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      'backend', GOOD_DIMS,
+      undefined, 0, undefined, undefined, 'mayor',
+    );
+    expect(stamp.attestorType).toBe('mayor');
+  });
+});
+
+// ─── aggregateReputation — multi-attestor ─────────────────────────────────────
+
+describe('aggregateReputation() multi-attestor', () => {
+  const subjectDid = 'did:key:z6MkAgent';
+  const TASK_URI_1 = 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-1';
+  const TASK_URI_2 = 'at://did:key:z6MkMayor/network.mycelium.task.posting/task-2';
+
+  it('backward compat: only mayor stamps produce same score as before', () => {
+    const stamps = [
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_1), attestorType: 'mayor' as const },
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_2), attestorType: 'mayor' as const },
+    ];
+    const mixedAgg = aggregateReputation(stamps);
+    // All mayor stamps: attestor weight cancels algebraically; score should equal uniform result
+    const baseAgg = aggregateReputation([
+      makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_1),
+      makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_2),
+    ]);
+    expect(mixedAgg.overallScore).toBeCloseTo(baseAgg.overallScore, 5);
+  });
+
+  it('populates breakdownByAttestor with correct counts', () => {
+    const stamps = [
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_1), attestorType: 'mayor' as const },
+      { ...makeStamp(GOOD_DIMS, subjectDid, 'backend', undefined, TASK_URI_1), attestorType: 'requester' as const },
+    ];
+    const agg = aggregateReputation(stamps);
+    expect(agg.breakdownByAttestor?.['mayor']?.count).toBe(1);
+    expect(agg.breakdownByAttestor?.['requester']?.count).toBe(1);
+  });
+
+  it('requester stamp with lower score reduces overallScore', () => {
+    const mayorStamp = { ...makeStamp(PERFECT_DIMS, subjectDid, 'backend', 100, TASK_URI_1), attestorType: 'mayor' as const };
+    const requesterStamp = { ...makeStamp(POOR_DIMS, subjectDid, 'backend', undefined, TASK_URI_1), attestorType: 'requester' as const };
+    const stamps = [mayorStamp, requesterStamp];
+    const agg = aggregateReputation(stamps);
+    // Mixed attestors: weighted average should be lower than pure mayor score of 100
+    expect(agg.overallScore).toBeLessThan(100);
+    expect(agg.overallScore).toBeGreaterThan(0);
   });
 });

@@ -9,6 +9,7 @@ import {
   TaskClaimSchema,
   TaskCompletionSchema,
   ReputationStampSchema,
+  TaskReviewSchema,
   SCHEMA_REGISTRY,
   validateRecord,
 } from './index.js';
@@ -312,8 +313,8 @@ describe('ReputationStampSchema', () => {
 // ─── SCHEMA_REGISTRY ──────────────────────────────────────────────────────────
 
 describe('SCHEMA_REGISTRY', () => {
-  it('contains all 15 record type schemas', () => {
-    expect(SCHEMA_REGISTRY.size).toBe(15);
+  it('contains all 16 record type schemas', () => {
+    expect(SCHEMA_REGISTRY.size).toBe(16);
     const expectedNsids = [
       'network.mycelium.agent.profile',
       'network.mycelium.agent.capability',
@@ -330,6 +331,7 @@ describe('SCHEMA_REGISTRY', () => {
       'network.mycelium.tool.provider',
       'network.mycelium.tool.definition',
       'network.mycelium.tool.invocation',
+      'network.mycelium.task.review',
     ];
     for (const nsid of expectedNsids) {
       expect(SCHEMA_REGISTRY.has(nsid), `Missing schema: ${nsid}`).toBe(true);
@@ -364,5 +366,91 @@ describe('validateRecord()', () => {
     expect(() =>
       validateRecord('net.unknown.collection', { anything: true }),
     ).not.toThrow();
+  });
+});
+
+// ─── TaskReviewSchema ─────────────────────────────────────────────────────────
+
+const COMPLETION_URI = 'at://did:key:z6MkagentAAAA/network.mycelium.task.completion/xyz';
+
+describe('TaskReviewSchema', () => {
+  const validReview = {
+    $type: 'network.mycelium.task.review' as const,
+    taskUri: TASK_URI,
+    reviewerDid: DID_B,
+    outcome: 'accepted' as const,
+    score: 85,
+    createdAt: NOW,
+  };
+
+  it('parses a valid task.review record', () => {
+    const result = TaskReviewSchema.parse(validReview);
+    expect(result.outcome).toBe('accepted');
+    expect(result.score).toBe(85);
+  });
+
+  it('accepts optional comment field', () => {
+    const result = TaskReviewSchema.parse({ ...validReview, comment: 'Great work!' });
+    expect(result.comment).toBe('Great work!');
+  });
+
+  it('rejects score below 0', () => {
+    expect(() => TaskReviewSchema.parse({ ...validReview, score: -1 })).toThrow();
+  });
+
+  it('rejects score above 100', () => {
+    expect(() => TaskReviewSchema.parse({ ...validReview, score: 101 })).toThrow();
+  });
+
+  it('rejects invalid outcome value', () => {
+    expect(() => TaskReviewSchema.parse({ ...validReview, outcome: 'ok' })).toThrow();
+  });
+
+  it('accepts all valid outcome values', () => {
+    for (const outcome of ['accepted', 'rejected', 'partial'] as const) {
+      expect(() => TaskReviewSchema.parse({ ...validReview, outcome })).not.toThrow();
+    }
+  });
+
+  it('rejects missing required fields', () => {
+    expect(() => TaskReviewSchema.parse({ $type: 'network.mycelium.task.review' })).toThrow();
+  });
+});
+
+// ─── ReputationStampSchema — attestorType ─────────────────────────────────────
+
+describe('ReputationStampSchema — attestorType', () => {
+  const validStamp = {
+    $type: 'network.mycelium.reputation.stamp' as const,
+    subjectDid: DID_A,
+    attestorDid: DID_B,
+    taskUri: TASK_URI,
+    completionUri: COMPLETION_URI,
+    taskDomain: 'frontend',
+    dimensions: { codeQuality: 8, reliability: 8, communication: 8, creativity: 8, efficiency: 8 },
+    overallScore: 80,
+    assessment: 'satisfactory' as const,
+    comment: 'Good work',
+    createdAt: NOW,
+  };
+
+  it('validates without attestorType (backward compat)', () => {
+    const result = ReputationStampSchema.parse(validStamp);
+    expect(result.attestorType).toBeUndefined();
+  });
+
+  it('accepts attestorType: mayor', () => {
+    const result = ReputationStampSchema.parse({ ...validStamp, attestorType: 'mayor' });
+    expect(result.attestorType).toBe('mayor');
+  });
+
+  it('accepts all valid attestorType values', () => {
+    for (const at of ['mayor', 'requester', 'peer', 'verifier'] as const) {
+      expect(() => ReputationStampSchema.parse({ ...validStamp, attestorType: at })).not.toThrow();
+    }
+  });
+
+  it('rejects invalid attestorType', () => {
+    expect(() => ReputationStampSchema.parse({ ...validStamp, attestorType: 'unknown' })).toThrow();
   });
 });
