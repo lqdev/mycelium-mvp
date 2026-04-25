@@ -1169,3 +1169,175 @@ The MVP is complete when:
 - [ ] Intelligence providers and models have DIDs and are stored as first-class records
 - [ ] Agent profiles reference intelligence by DID (not hard-coded strings)
 - [ ] Task completions include intelligence attribution
+
+---
+
+## Phase 17: Composable Trust & Open Task Authorship
+
+**Branch:** `feat/phase-17-composable-trust` (from `main`)
+**Tests at start:** 433 passing, 15 record types
+**Goal:** Decouple task requester from Mayor; introduce multi-attestor reputation; prove Wanted Board is an AT Protocol AppView-style indexer.
+
+### Core Insight
+
+Currently the Mayor is BOTH task requester AND orchestrator. In a truly decentralized AT Protocol world, any entity with a DID can publish `task.posting` to their own PDS. The Wanted Board should discover those tasks via Jetstream (AppView pattern), not just enumerate tasks from Mayor-owned repos.
+
+This decoupling also enables **composable trust**: different attestors answer different questions.
+
+```
+Mayor stamp:     "Did the protocol complete? Did the agent meet the quality bar?"
+Requester stamp: "Did the deliverable meet my actual need?"
+Peer stamp:      "Is the work technically sound? (domain expert review)"
+Verifier stamp:  "Did it pass automated checks?"
+```
+
+No single attestor is sufficient. Weighted aggregation across attestor types creates a richer and more trustworthy reputation signal.
+
+### New Record Types (2)
+
+**`network.mycelium.task.review`**
+- Stored in: task requester's repository
+- rkey: `review-{timestamp}`
+- Purpose: requester's formal acceptance/rejection after seeing `task.completion`
+
+```typescript
+interface TaskReview {
+  $type: "network.mycelium.task.review";
+  taskUri: string;          // AT URI of the original task.posting
+  completionUri: string;    // AT URI of the task.completion
+  requesterDid: string;     // DID of the entity that posted the task
+  outcome: "accepted" | "revision_needed" | "rejected";
+  score: number;            // 0–100 requester satisfaction score
+  feedback?: string;        // Freeform feedback to agent
+  createdAt: string;
+}
+```
+
+**`network.mycelium.credential.grant`** *(stretch goal — may slip to Phase 18)*
+- Stored in: attestor's repository
+- Purpose: verified expertise credential issued to a specific agent DID
+- Enables "this agent has been verified by X to have capability Y" signals
+
+### reputation.stamp Changes
+
+Add `attestorType` field:
+```typescript
+interface ReputationStamp {
+  // ...existing fields...
+  attestorType: "mayor" | "requester" | "peer" | "verifier"; // NEW in Phase 17
+}
+```
+
+Update aggregation weights in `src/constants.ts`:
+```typescript
+REPUTATION_ATTESTOR_WEIGHTS: {
+  mayor:     0.40,   // Protocol gate + quality bar
+  requester: 0.35,   // Was the need actually met? (most economically significant)
+  peer:      0.20,   // Domain expert technical review
+  verifier:  0.05,   // Automated checks baseline
+}
+```
+
+### Phase 17a: Open Task Authorship
+
+**Goal:** Separate task requester from Mayor in the demo.
+
+**Changes:**
+- Create a "customer" DID in `server.ts`/`run.ts` — a separate identity that posts the project task to ITS OWN repo
+- Customer posts `task.posting` to customer's repo (not Mayor's repo)
+- Wanted Board discovery loop updated: `discoverTasks()` searches across all repos (not just `mayorRepos`)
+  - Mayor's Jetstream consumer already sees all firehose events — add customer's task.posting records to the indexed set
+- Mayor detects external task origin (`posterDid !== Mayor.did`) and acts as pure coordinator
+- Customer repo persists separately from Mayor repo
+
+**Test it:** Dashboard shows task.posting owned by customer DID, not Mayor DID. Mayor shows as coordinator, not as poster.
+
+### Phase 17b: task.review Record
+
+**Goal:** Give the requester a formal voice after completion.
+
+**Schema:** Add `network.mycelium.task.review` to `src/schemas/index.ts` and `src/schemas/types.ts`
+**Lexicon:** Add `src/lexicon/task-review.json`
+
+**Flow:**
+1. After `mayor.completeTask()` writes a stamp, emit event that requester should review
+2. Customer (in demo: scripted after stamp) writes `task.review` to customer repo
+3. Mayor (or directly: reputation module) reads `task.review` and writes a second stamp with `attestorType: 'requester'`
+
+**Why Mayor writes the requester stamp:** The requester writes `task.review` (their opinion). The reputation system translates that into a `reputation.stamp` with `attestorType: 'requester'` signed by the Mayor (attestor of record). This keeps stamp issuance under protocol control while encoding requester sentiment.
+
+*Alternative*: let requester write their own stamp directly — explore in Phase 17b implementation.
+
+### Phase 17c: Multi-Attestor Aggregation
+
+**Goal:** Update `aggregateReputation()` to weight stamps by `attestorType`.
+
+**File:** `src/reputation/index.ts`
+
+**Changes:**
+- `aggregateReputation()` reads `attestorType` from each stamp
+- Applies `REPUTATION_ATTESTOR_WEIGHTS` multiplier before averaging
+- Returns a `breakdownByAttestor` field showing scores per attestor type
+- `rankClaims()` uses the weighted aggregate (no change to call signature)
+
+**Dashboard:** Show attestor breakdown in reputation character sheets.
+
+### Phase 17d: Demo Integration
+
+**Goal:** End-to-end demo where customer posts, Mayor orchestrates, customer accepts.
+
+**Scenario:**
+1. Customer DID bootstraps with own repo
+2. Customer posts `task.posting` ("Build the AI Coordination Protocol")  
+3. Mayor discovers task via Wanted Board (sees it from customer's repo via firehose)
+4. Task goes through normal claim→execute→complete lifecycle
+5. Mayor issues stamp with `attestorType: 'mayor'`
+6. Customer reviews completion, writes `task.review` (outcome: 'accepted')
+7. Reputation system issues second stamp with `attestorType: 'requester'`
+8. Aggregated reputation now reflects both Mayor + requester perspectives
+
+### Phase 17e: ADR-005
+
+Write `docs/ADR/ADR-005-composable-trust.md` documenting:
+- Decision: multi-attestor reputation with weighted aggregation
+- Why not Mayor-only (conflict of interest, can't answer "did it meet the need?")
+- Why `attestorType` on stamp rather than separate schema per attestor type
+- Weight rationale (0.40/0.35/0.20/0.05)
+- Phase 18 backlog: peer review coordination, verifier service registry
+
+### Phase 17f: Tests
+
+New tests to write:
+- `task.review` schema validates correctly, rejects invalid `outcome` values
+- `reputation.stamp` with `attestorType` field validates
+- `aggregateReputation()` with mixed attestorType stamps produces weighted output
+- `aggregateReputation()` with no requester stamps still works (backward compat)
+- Customer flow: customer posts task → mayor orchestrates → customer reviews → aggregation reflects it
+
+### Implementation Order
+
+```
+17a (customer DID + open task authorship)
+  ↓
+17b (task.review schema + lexicon)
+  ↓
+17c (attestorType on stamp + weighted aggregation)
+  ↓
+17d (demo wiring: customer → Mayor → customer review)
+  ↓
+17e (ADR-005)
+  ↓
+17f (tests for all new behavior)
+```
+
+### Starting the Session
+
+```bash
+git checkout main
+git checkout -b feat/phase-17-composable-trust
+npm test  # verify 433 tests pass baseline
+```
+
+Read: `docs/ADR/ADR-005-composable-trust.md` for design intent.
+Read: `.ai-memex/research-trust-attestation-topologies.md` for multi-attestor rationale.
+Read: `.ai-memex/pattern-at-protocol-wanted-board-as-appview.md` for AppView pattern details.
