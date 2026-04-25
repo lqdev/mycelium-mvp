@@ -11,11 +11,17 @@ const EXPECTED_NSIDS = [
   'network.mycelium.task.claim',
   'network.mycelium.task.completion',
   'network.mycelium.reputation.stamp',
+  'network.mycelium.knowledge.provider',
+  'network.mycelium.knowledge.document',
+  'network.mycelium.knowledge.query',
+  'network.mycelium.tool.provider',
+  'network.mycelium.tool.definition',
+  'network.mycelium.tool.invocation',
 ];
 
 describe('Lexicon registry', () => {
-  it('exports exactly 9 lexicons', () => {
-    expect(getLexicons()).toHaveLength(9);
+  it('exports exactly 15 lexicons', () => {
+    expect(getLexicons()).toHaveLength(15);
   });
 
   it('covers all expected NSIDs', () => {

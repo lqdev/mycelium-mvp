@@ -6,7 +6,7 @@
 
 ## Namespace Convention
 
-All Mycelium records use the `network.mycelium.*` namespace (reverse-DNS), following AT Protocol Lexicon conventions. The MVP defines **9 record types** organized across 4 domains: `agent`, `intelligence`, `task`, and `reputation`.
+All Mycelium records use the `network.mycelium.*` namespace (reverse-DNS), following AT Protocol Lexicon conventions. The MVP defines **15 record types** organized across 6 domains: `agent`, `intelligence`, `task`, `reputation`, `knowledge`, and `tool`.
 
 ```
 network.mycelium.{domain}.{type}
@@ -513,6 +513,16 @@ interface ReputationStamp {
   completionUri: string;                // AT URI of the task.completion record
   taskDomain: string;                   // The capability domain of the task
   intelligenceDid?: string;             // DID of intelligence that powered the work (trust chain)
+  knowledgeRefs?: Array<{               // Knowledge sources consulted (Phase 16)
+    providerDid: string;
+    queryHash: string;                  // SHA-256(question)
+    verificationLevel: "claimed" | "cid";
+  }>;
+  toolRefs?: Array<{                    // Tools invoked during execution (Phase 16)
+    toolDid: string;                    // DID of the tool provider
+    toolUri: string;                    // AT URI of the tool.definition record
+    success: boolean;
+  }>;
   dimensions: {
     codeQuality: number;                // 0-100
     reliability: number;                // 0-100
@@ -607,6 +617,14 @@ Cross-references to intelligence.model:
   • agent.profile    → intelligence.model  (via intelligenceRefs, N:M)
   • task.completion  → intelligence.model  (via intelligenceUsed)
   • reputation.stamp → intelligence.model  (via intelligenceDid)
+
+Knowledge + tool provenance chain (Phase 16):
+  • knowledge.provider → knowledge.document (1:N, via providerDid)
+  • knowledge.query    → knowledge.provider (via providerDid), task.posting (via taskUri)
+  • tool.provider      → tool.definition   (1:N, via providerDid)
+  • tool.invocation    → tool.definition   (via toolUri), task.posting (via taskUri)
+  • reputation.stamp   → knowledge.query   (via knowledgeRefs[].queryHash)
+  • reputation.stamp   → tool.definition   (via toolRefs[].toolUri)
 ```
 
 ---
@@ -621,3 +639,147 @@ Cross-references to intelligence.model:
 6. **Schemas are validated on write**: Records are validated against their schema before being stored.
 7. **Providers own model records**: Intelligence model descriptions live in the provider's repo.
 8. **Intelligence is attributable**: Task completions reference which intelligence did the work.
+9. **Knowledge providers own document records**: `knowledge.document` records live in the provider's repo; PDS MST assigns CIDs automatically — enabling content-addressable verification.
+10. **Tool providers own definition records**: `tool.definition` records live in the provider's repo; invocations reference the definition's AT URI for full auditability.
+
+---
+
+## 10. Knowledge Provider
+
+**NSID:** `network.mycelium.knowledge.provider`
+**Purpose:** Identity and endpoint description for a knowledge base. First-class network participant with its own DID.
+**Stored in:** Provider's own repository.
+**rkey:** `self` (singleton per provider)
+
+```typescript
+interface KnowledgeProvider {
+  $type: "network.mycelium.knowledge.provider";
+  did: string;
+  name: string;
+  description: string;
+  endpoint: string;                     // HTTP base URL (/api/ask for NL queries)
+  capabilities: string[];               // e.g. ['nl-question-answering', 'document-retrieval']
+  domains: string[];                    // e.g. ['general', 'AI', 'legal']
+  verificationMethod: "none" | "cid";  // 'cid' when provider publishes knowledge.document records
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## 11. Knowledge Document
+
+**NSID:** `network.mycelium.knowledge.document`
+**Purpose:** An individual content item in a knowledge base. When stored in a PDS, the MST assigns a CID — enabling content-addressable verification via `knowledge.query.contextCids`.
+**Stored in:** Knowledge provider's repository.
+**rkey:** `doc-{contentHash prefix}` (derived from SHA-256 of content)
+
+```typescript
+interface KnowledgeDocument {
+  $type: "network.mycelium.knowledge.document";
+  providerDid: string;                  // which KB owns this document
+  title: string;
+  content: string;                      // the actual text/knowledge
+  domains: string[];
+  contentHash: string;                  // SHA-256 of content — dedup + integrity
+  version: string;                      // for tracking updates
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## 12. Knowledge Query
+
+**NSID:** `network.mycelium.knowledge.query`
+**Purpose:** Audit record for each KB consultation during task execution. Written by the agent, references the provider and optionally the specific documents used.
+**Stored in:** Querying agent's repository.
+**rkey:** `kq-{timestamp}`
+
+```typescript
+interface KnowledgeQuery {
+  $type: "network.mycelium.knowledge.query";
+  taskUri: string;                      // AT URI of the task being executed
+  providerDid: string;                  // which KB was queried
+  queryHash: string;                    // SHA-256(question) — privacy-preserving audit key
+  contextCids?: string[];               // CIDs of knowledge.document records used (Level 2)
+  resultCount: number;
+  success: boolean;                     // false = endpoint unreachable (not 0 results)
+  errorCode?: string;                   // 'ENDPOINT_UNREACHABLE' | 'TIMEOUT'
+  verificationLevel: "claimed" | "cid"; // 'cid' when contextCids is populated
+  createdAt: string;
+}
+```
+
+**Verification levels:**
+- `claimed` — agent asserts it queried this KB; no CIDs provided
+- `cid` — agent provides specific document CIDs; verifiable against PDS MST records
+
+---
+
+## 13. Tool Provider
+
+**NSID:** `network.mycelium.tool.provider`
+**Purpose:** Identity and endpoint for a tool service. First-class network participant with its own DID.
+**Stored in:** Provider's own repository.
+**rkey:** `self` (singleton per provider)
+
+```typescript
+interface ToolProvider {
+  $type: "network.mycelium.tool.provider";
+  did: string;
+  name: string;
+  description: string;
+  endpoint: string;                     // HTTP base URL (/api/invoke)
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## 14. Tool Definition
+
+**NSID:** `network.mycelium.tool.definition`
+**Purpose:** An individual tool exposed by a provider. Like an MCP tool definition but CID-addressable via AT Protocol. Invocations reference this record's AT URI — not a bare name.
+**Stored in:** Tool provider's repository.
+**rkey:** `tool-{name}`
+
+```typescript
+interface ToolDefinition {
+  $type: "network.mycelium.tool.definition";
+  providerDid: string;                          // which tool provider owns this tool
+  name: string;                                 // 'web-search', 'code-analysis', 'test-runner'
+  description: string;
+  inputSchema: Record<string, unknown>;         // JSON Schema
+  outputSchema?: Record<string, unknown>;       // JSON Schema
+  category: "retrieval" | "execution" | "communication" | "generation";
+  sideEffects: boolean;                         // true if tool modifies external state
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## 15. Tool Invocation
+
+**NSID:** `network.mycelium.tool.invocation`
+**Purpose:** Audit record for each tool call during task execution. Written by the agent, references the specific `tool.definition` AT URI (not just a provider name).
+**Stored in:** Invoking agent's repository.
+**rkey:** `ti-{timestamp}`
+
+```typescript
+interface ToolInvocation {
+  $type: "network.mycelium.tool.invocation";
+  taskUri: string;                      // AT URI of the task being executed
+  toolDid: string;                      // DID of the tool provider
+  toolUri: string;                      // AT URI of the tool.definition record (specific tool)
+  inputHash: string;                    // SHA-256(serialized inputs) — privacy-preserving audit key
+  success: boolean;
+  errorCode?: string;
+  createdAt: string;
+}
+```

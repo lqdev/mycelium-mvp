@@ -21,6 +21,8 @@ import { initPersistence, loadFirehoseLog, loadIdentities, saveIdentity, getConn
 import { getLexicons, getLexicon } from '../../lexicon/index.js';
 import { initPdsBridge, isPdsBridgeEnabled } from '../../atproto/pds-bridge.js';
 import { initJetstream } from '../../atproto/jetstream.js';
+import { bootstrapKnowledgeProviders, type BootstrappedKnowledgeProvider } from '../../knowledge/index.js';
+import { bootstrapToolProviders, type BootstrappedToolProvider } from '../../tools/index.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -50,6 +52,8 @@ interface DemoState {
   mayor: Mayor;
   mayorRepo: AgentRepository;
   agents: BootstrappedAgent[];
+  kbProviders: BootstrappedKnowledgeProvider[];
+  toolProviders: BootstrappedToolProvider[];
   dbInstance: Awaited<ReturnType<typeof createDuckDB>>['instance'];
 }
 
@@ -135,12 +139,20 @@ async function bootstrapDemo(): Promise<DemoState> {
     }
   }
 
+  // Bootstrap knowledge and tool providers
+  const { providers: kbProviders } = bootstrapKnowledgeProviders(firehose, savedIdentities);
+  const { providers: toolProviders } = bootstrapToolProviders(firehose, savedIdentities);
+
   const runners = agents.map(({ def, identity, repo }) =>
-    createAgentRunner(def, identity, repo, mayorRepo, firehose, intelligence, undefined, { forceAccept: true }),
+    createAgentRunner(def, identity, repo, mayorRepo, firehose, intelligence, undefined, {
+      forceAccept: true,
+      kbProviders,
+      toolProviders,
+    }),
   );
   runners.forEach((r) => r.start());
 
-  return { firehose, mayor, mayorRepo, agents, dbInstance };
+  return { firehose, mayor, mayorRepo, agents, kbProviders, toolProviders, dbInstance };
 }
 
 // ─── REST response builders ───────────────────────────────────────────────────
@@ -492,6 +504,16 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     tasksAccepted: [...state.mayor.postedTasks.values()].filter((t) => t.status === 'accepted').length,
     firehoseEvents: state.firehose.log.length,
     agents: state.agents.length,
+    knowledgeProviders: state.kbProviders.map((kb) => ({
+      did: kb.identity.did,
+      name: kb.provider.name,
+      documentCount: kb.documentUris.size,
+    })),
+    toolProviders: state.toolProviders.map((tp) => ({
+      did: tp.identity.did,
+      name: tp.provider.name,
+      toolCount: tp.definitions.length,
+    })),
   }));
 
   // ── REST API (detail) ─────────────────────────────────────────────────────

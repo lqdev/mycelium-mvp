@@ -357,6 +357,9 @@ function handleCompletion(
       taskDomain,
       penaltyDims,
       completion.intelligenceUsed?.modelDid,
+      0,
+      completion.knowledgeUsed,
+      completion.toolsUsed,
     );
 
     // Update agent registry after rejection
@@ -403,6 +406,9 @@ function handleCompletion(
     taskDomain,
     dims,
     completion.intelligenceUsed?.modelDid,
+    0,
+    completion.knowledgeUsed,
+    completion.toolsUsed,
   );
 
   // Update agent registry: remove from activeTasks, refresh reputation

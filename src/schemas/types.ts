@@ -303,6 +303,8 @@ export interface TaskCompletion {
     modelDid: string;
     providerDid: string;
   };
+  knowledgeUsed?: Array<{ providerDid: string; queryHash: string; verificationLevel: string }>;
+  toolsUsed?: Array<{ toolDid: string; toolUri: string; success: boolean }>;
   createdAt: string;
 }
 
@@ -322,6 +324,8 @@ export interface ReputationStamp {
   completionUri: string;
   taskDomain: string;
   intelligenceDid?: string;
+  knowledgeRefs?: Array<{ providerDid: string; queryHash: string; verificationLevel: string }>;
+  toolRefs?: Array<{ toolDid: string; toolUri: string; success: boolean }>;
   dimensions: ReputationDimensions;
   overallScore: number;
   assessment: 'exceptional' | 'strong' | 'satisfactory' | 'needs_improvement' | 'unsatisfactory';
@@ -337,6 +341,82 @@ export interface AggregatedReputation {
   taskBreakdown: Record<string, { count: number; avgScore: number }>;
   recentTrend: 'improving' | 'stable' | 'declining';
   trustLevel: 'newcomer' | 'established' | 'trusted' | 'expert';
+}
+
+// ─── Knowledge Providers ──────────────────────────────────────────────────────
+
+export interface KnowledgeProvider {
+  $type: 'network.mycelium.knowledge.provider';
+  did: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  capabilities: string[];
+  domains: string[];
+  verificationMethod: 'none' | 'cid';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeDocument {
+  $type: 'network.mycelium.knowledge.document';
+  providerDid: string;
+  title: string;
+  content: string;
+  domains: string[];
+  contentHash: string;
+  version: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeQuery {
+  $type: 'network.mycelium.knowledge.query';
+  taskUri: string;
+  providerDid: string;
+  queryHash: string;
+  contextCids?: string[];
+  resultCount: number;
+  success: boolean;
+  errorCode?: string;
+  verificationLevel: 'claimed' | 'cid';
+  createdAt: string;
+}
+
+// ─── Tool Providers ───────────────────────────────────────────────────────────
+
+export interface ToolProvider {
+  $type: 'network.mycelium.tool.provider';
+  did: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolDefinition {
+  $type: 'network.mycelium.tool.definition';
+  providerDid: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  category: 'retrieval' | 'execution' | 'communication' | 'generation';
+  sideEffects: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolInvocation {
+  $type: 'network.mycelium.tool.invocation';
+  taskUri: string;
+  toolDid: string;
+  toolUri: string;
+  inputHash: string;
+  success: boolean;
+  errorCode?: string;
+  createdAt: string;
 }
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────

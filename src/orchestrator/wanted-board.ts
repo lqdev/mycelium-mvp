@@ -27,6 +27,8 @@ export type CompletionResults = {
   metrics: TaskCompletion['metrics'];
   notes?: string;
   intelligenceUsed?: TaskCompletion['intelligenceUsed'];
+  knowledgeUsed?: TaskCompletion['knowledgeUsed'];
+  toolsUsed?: TaskCompletion['toolsUsed'];
 };
 
 // ─── State Machine ────────────────────────────────────────────────────────────

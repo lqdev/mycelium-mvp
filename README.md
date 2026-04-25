@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 348 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation
+> **Status:** MVP — 433 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers
 
 ---
 
@@ -171,7 +171,7 @@ curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collect
 |-------|-----------|-------------------|
 | L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable, persisted |
 | L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records |
-| L2 | Schemas | Zod-validated Lexicon-like records (9 types) |
+| L2 | Schemas | Zod-validated Lexicon-like records (15 types) |
 | L3 | Federation | In-memory Firehose + AT Protocol PDS bridge (real XRPC) + Jetstream federation |
 | L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted/rejected→open) |
 | L4 | Orchestration | Mayor — decomposes projects, ranks claims, quality-gates completions |
@@ -198,8 +198,10 @@ src/
   storage/        DuckDB connection factory + async persistence layer
   firehose/       In-memory pub/sub event bus
   atproto/        AT Protocol bridge (PDS XRPC mirror + Jetstream federation consumer)
-  schemas/        Zod schemas for all 9 record types
+  schemas/        Zod schemas for all 15 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
+  knowledge/      Knowledge provider bootstrap, seed documents, query with graceful degradation
+  tools/          Tool provider bootstrap, definition records, invocation with graceful degradation
   agents/         Engine (bootstrap + createAgentRunner) + 6-agent roster
   orchestrator/   Mayor + Wanted Board (claim ranking, task lifecycle, quality gate)
   reputation/     Stamp creation, aggregation, trust levels, rankClaims
@@ -225,6 +227,12 @@ scripts/
 **Reputation** — After task acceptance, the Mayor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps live in the Mayor's repo, signed and attributable. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`).
 
 **Intelligence Attribution** — Every task completion records `intelligenceUsed: { modelDid, providerDid }`. Reputation stamps carry `intelligenceDid`. The full provenance chain (agent + model + provider) is verifiable.
+
+**Knowledge Attribution** — Before each LLM call, agents query registered knowledge providers. Every consultation writes a `knowledge.query` record (providerDid, queryHash, verificationLevel). `contextCids` reference specific `knowledge.document` records — CID-addressable when published to a PDS. Reputation stamps carry `knowledgeRefs`.
+
+**Tool Attribution** — After the LLM generates a response, agents invoke matching tool providers. Every invocation writes a `tool.invocation` record referencing the AT URI of the specific `tool.definition` (not just a name — the definition has its own DID and CID). Reputation stamps carry `toolRefs`.
+
+Set `KB_ENDPOINT` and `TOOL_ENDPOINT` env vars to connect live providers; without them, a built-in mock provider with seed documents and tools runs automatically.
 
 ---
 
@@ -265,11 +273,11 @@ The dashboard shows live SSE events, agent profiles, task timelines, and reputat
 ## Testing
 
 ```bash
-npm test            # run all 348 tests once
+npm test            # run all 433 tests once
 npm run test:watch  # watch mode
 ```
 
-Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, storage, atproto.
+Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, knowledge, tools, storage, atproto.
 
 ---
 
@@ -288,6 +296,7 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
+- **Phase 17: Composable Trust** — Multi-attestor reputation (`task.submission`, `credential.grant`, `task.review`, `verifier.service`); customer feedback stamps; credentialed peer review agents; weighted reputation aggregation across Mayor + customer + peer stamps
 - **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route exists; needs a registered domain)
-- **Federation** — Multi-Mayor federation with real cross-node task discovery is implemented and actively developed on the [`feat/federation`](../../tree/feat/federation) branch (Phases 13–14 complete, 359 tests)
+- **Federation** — Multi-Mayor federation with real cross-node task discovery is implemented on the [`feat/federation`](../../tree/feat/federation) branch (Phases 13–15 complete, 359 tests)
 - **Production hardening** — Rate limiting, structured logging, health check endpoints, graceful shutdown

@@ -26,6 +26,10 @@ import { callModel } from '../intelligence/client.js';
 import { buildSystemPrompt, buildUserPrompt, parseTaskCompletionResponse } from '../intelligence/prompts.js';
 import { AGENT_ROSTER, TASK_ARTIFACTS, type AgentDefinition, type CapabilityDef } from './roster.js';
 import { CONSTANTS } from '../constants.js';
+import type { BootstrappedKnowledgeProvider } from '../knowledge/index.js';
+import { queryKnowledgeProvider, sha256 as kbSha256 } from '../knowledge/index.js';
+import type { BootstrappedToolProvider } from '../tools/index.js';
+import { invokeToolProvider, selectTool, sha256 as toolSha256 } from '../tools/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -225,7 +229,11 @@ export function createAgentRunner(
   firehose: Firehose,
   intelligence: IntelligenceBootstrapResult,
   executionDelayMs?: number,
-  options: { forceAccept?: boolean } = {},
+  options: {
+    forceAccept?: boolean;
+    kbProviders?: BootstrappedKnowledgeProvider[];
+    toolProviders?: BootstrappedToolProvider[];
+  } = {},
 ): { start(): void } {
   // Map taskUri → { claimUri, taskTitle } for tracking active claims
   const claimTracker = new Map<string, { claimUri: string; taskTitle: string }>();
@@ -248,19 +256,55 @@ export function createAgentRunner(
       CONSTANTS.SIMULATED_DURATION_MINUTES[task.complexity] * def.behavior.speedMultiplier,
     );
 
+    // ─── Step 1: Query knowledge providers (before LLM call) ──────────────────
+    let kbContext = '';
+    const kbRefs: NonNullable<CompletionResults['knowledgeUsed']> = [];
+
+    for (const kb of options.kbProviders ?? []) {
+      try {
+        const question = `Task: ${task.title}. ${task.description.slice(0, 200)}`;
+        const queryHash = kbSha256(question.trim().toLowerCase());
+        const result = await queryKnowledgeProvider(kb, question);
+        const success = !result.error;
+        const verificationLevel = result.contextCids?.length ? 'cid' : 'claimed';
+
+        putRecord(repo, 'network.mycelium.knowledge.query', `kq-${Date.now()}-${kb.identity.did.slice(-6)}`, {
+          $type: 'network.mycelium.knowledge.query' as const,
+          taskUri,
+          providerDid: kb.identity.did,
+          queryHash,
+          contextCids: result.contextCids,
+          resultCount: result.resultCount,
+          success,
+          errorCode: result.error,
+          verificationLevel,
+          createdAt: new Date().toISOString(),
+        });
+
+        if (success && result.context) {
+          kbContext += result.context + '\n\n';
+          kbRefs.push({ providerDid: kb.identity.did, queryHash, verificationLevel });
+        }
+      } catch {
+        // per-provider failure never blocks task execution
+      }
+    }
+
+    // ─── Step 2: Build LLM prompt (enriched with KB context if available) ─────
     // Try real LLM inference; fall back to simulated output if unavailable or disabled.
     let llmResult = null;
     try {
       const matchCap =
         def.capabilities.find((c) => task.requiredCapabilities.some((r) => r.domain === c.domain)) ??
         def.capabilities[0];
+      const systemPrompt = buildSystemPrompt(matchCap?.domain ?? 'general', def.displayName, matchCap?.tools ?? []);
+      const userPrompt = kbContext
+        ? `Context from knowledge base:\n${kbContext.trim()}\n\n${buildUserPrompt(task, artifactNames)}`
+        : buildUserPrompt(task, artifactNames);
       const rawResponse = await callModel(
         [
-          {
-            role: 'system',
-            content: buildSystemPrompt(matchCap?.domain ?? 'general', def.displayName, matchCap?.tools ?? []),
-          },
-          { role: 'user', content: buildUserPrompt(task, artifactNames) },
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
         ],
         def.primaryModelSlug,
       );
@@ -269,6 +313,39 @@ export function createAgentRunner(
       // callModel already returns null on failure; this guards against unexpected throws
     }
 
+    // ─── Step 3: Invoke tools (after LLM call) ────────────────────────────────
+    const toolRefs: NonNullable<CompletionResults['toolsUsed']> = [];
+
+    for (const toolProvider of options.toolProviders ?? []) {
+      try {
+        const selected = selectTool(toolProvider, task.requiredCapabilities);
+        if (!selected) continue;
+
+        const inputs = { taskUri };
+        const inputHash = toolSha256(JSON.stringify(inputs));
+        const result = await invokeToolProvider(toolProvider, selected.uri, inputs);
+        const success = result.success;
+
+        putRecord(repo, 'network.mycelium.tool.invocation', `ti-${Date.now()}-${toolProvider.identity.did.slice(-6)}`, {
+          $type: 'network.mycelium.tool.invocation' as const,
+          taskUri,
+          toolDid: toolProvider.identity.did,
+          toolUri: selected.uri,
+          inputHash,
+          success,
+          errorCode: result.error,
+          createdAt: new Date().toISOString(),
+        });
+
+        if (success) {
+          toolRefs.push({ toolDid: toolProvider.identity.did, toolUri: selected.uri, success });
+        }
+      } catch {
+        // per-provider failure never blocks task execution
+      }
+    }
+
+    // ─── Step 4: Build completion record ──────────────────────────────────────
     const results: CompletionResults = {
       summary:
         llmResult?.summary ??
@@ -289,6 +366,8 @@ export function createAgentRunner(
       },
       // Only attribute intelligence when real inference was actually used
       intelligenceUsed: llmResult && modelDid ? { modelDid, providerDid } : undefined,
+      knowledgeUsed: kbRefs.length > 0 ? kbRefs : undefined,
+      toolsUsed: toolRefs.length > 0 ? toolRefs : undefined,
     };
 
     try {
