@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 433 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers
+> **Status:** MVP — 467 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · network participants dashboard
 
 ---
 
@@ -198,7 +198,7 @@ src/
   storage/        DuckDB connection factory + async persistence layer
   firehose/       In-memory pub/sub event bus
   atproto/        AT Protocol bridge (PDS XRPC mirror + Jetstream federation consumer)
-  schemas/        Zod schemas for all 15 record types
+  schemas/        Zod schemas for all 16 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
   knowledge/      Knowledge provider bootstrap, seed documents, query with graceful degradation
   tools/          Tool provider bootstrap, definition records, invocation with graceful degradation
@@ -224,7 +224,9 @@ scripts/
 
 **Quality Gate** — The Mayor evaluates completions against quality thresholds (pass rate, coverage, summary depth). Poor-quality work is rejected: the task reopens, the agent earns a negative stamp, and another agent can claim it. After 3 attempts, the task is force-accepted.
 
-**Reputation** — After task acceptance, the Mayor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps live in the Mayor's repo, signed and attributable. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`).
+**Reputation** — After task acceptance, the Mayor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps are typed by `attestorType` (`mayor`, `requester`, `peer`) and weighted during aggregation — Mayor stamps carry 40%, requester feedback 35%, peer review 20%. Stamps live in the attestor's repo, signed and attributable. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`).
+
+**Network Participants** — The dashboard shows all entity types in a unified "Network Participants" view: 👤 human task requesters (with their own DID and AT Protocol identity), 🏛️ the Mayor orchestrator, 🤖 AI agents, 🔧 tool providers, and 📚 knowledge providers. Customer `task.posting` and `task.review` events are labeled by handle in the firehose.
 
 **Intelligence Attribution** — Every task completion records `intelligenceUsed: { modelDid, providerDid }`. Reputation stamps carry `intelligenceDid`. The full provenance chain (agent + model + provider) is verifiable.
 
@@ -273,7 +275,7 @@ The dashboard shows live SSE events, agent profiles, task timelines, and reputat
 ## Testing
 
 ```bash
-npm test            # run all 433 tests once
+npm test            # run all 467 tests once
 npm run test:watch  # watch mode
 ```
 
@@ -287,7 +289,7 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 - [`README.md`](./docs/PRD/README.md) — Executive summary and MVP scope
 - [`ARCHITECTURE.md`](./docs/PRD/ARCHITECTURE.md) — Component design and data flow
-- [`SCHEMAS.md`](./docs/PRD/SCHEMAS.md) — All 9 Lexicon record type definitions
+- [`SCHEMAS.md`](./docs/PRD/SCHEMAS.md) — All 16 Lexicon record type definitions
 - [`INTELLIGENCE.md`](./docs/PRD/INTELLIGENCE.md) — Intelligence provider strategy
 - [`E2E-SCENARIO.md`](./docs/PRD/E2E-SCENARIO.md) — Detailed demo walkthrough
 - [`IMPLEMENTATION-PLAN.md`](./docs/PRD/IMPLEMENTATION-PLAN.md) — Phased build plan
@@ -296,7 +298,6 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Phase 17: Composable Trust** — Multi-attestor reputation (`task.submission`, `credential.grant`, `task.review`, `verifier.service`); customer feedback stamps; credentialed peer review agents; weighted reputation aggregation across Mayor + customer + peer stamps
 - **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route exists; needs a registered domain)
 - **Federation** — Multi-Mayor federation with real cross-node task discovery is implemented on the [`feat/federation`](../../tree/feat/federation) branch (Phases 13–15 complete, 359 tests)
 - **Production hardening** — Rate limiting, structured logging, health check endpoints, graceful shutdown
