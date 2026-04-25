@@ -21,8 +21,8 @@ const EXPECTED_NSIDS = [
 ];
 
 describe('Lexicon registry', () => {
-  it('exports exactly 16 lexicons', () => {
-    expect(getLexicons()).toHaveLength(16);
+  it('exports exactly 19 lexicons', () => {
+    expect(getLexicons()).toHaveLength(19);
   });
 
   it('covers all expected NSIDs', () => {

@@ -741,6 +741,107 @@ const taskReview: LexiconDoc = {
   },
 };
 
+// ─── Proof-chain Lexicons ─────────────────────────────────────────────────────
+
+const matchRecommendation: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.match.recommendation',
+  description: 'Written by the matcher before task assignment. Documents candidate ranking and the justification for the selection decision.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'matcherDid', 'policy', 'rankings', 'selectedDid', 'selectedClaimUri', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the task.posting being matched.' },
+          matcherDid: { type: 'string', format: 'did', description: 'DID of the matcher (may be bundled inside the Mayor).' },
+          policy: { type: 'string', knownValues: ['trust-weighted'], description: 'Matching policy applied.' },
+          rankings: {
+            type: 'array',
+            items: { type: 'ref', ref: '#rankEntry' },
+            description: 'Ordered list of candidates from best (rank 1) to worst.',
+          },
+          selectedDid: { type: 'string', format: 'did', description: 'DID of the selected candidate.' },
+          selectedClaimUri: { type: 'string', description: 'AT URI of the winning claim.' },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+    rankEntry: {
+      type: 'object',
+      required: ['rank', 'candidateDid', 'claimUri', 'score', 'reasons'],
+      properties: {
+        rank: { type: 'integer', minimum: 1, description: 'Position (1 = best).' },
+        candidateDid: { type: 'string', format: 'did', description: 'DID of this candidate.' },
+        claimUri: { type: 'string', description: 'AT URI of this candidate\'s claim.' },
+        score: { type: 'number', description: 'Composite ranking score.' },
+        reasons: { type: 'array', items: { type: 'string' }, description: 'Human-readable reasons for this score.' },
+      },
+    },
+  },
+};
+
+const taskAssignment: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.task.assignment',
+  description: 'Written by the coordinator when a task is formally assigned to a worker. Links the task, the winning claim, and the recommendation that justified the choice.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'claimUri', 'coordinatorDid', 'assigneeDid', 'matchRecommendationUri', 'assignmentPolicy', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the assigned task.posting.' },
+          claimUri: { type: 'string', description: 'AT URI of the accepted task.claim.' },
+          coordinatorDid: { type: 'string', format: 'did', description: 'DID of the coordinator (may be bundled inside the Mayor).' },
+          assigneeDid: { type: 'string', format: 'did', description: 'DID of the agent being assigned.' },
+          matchRecommendationUri: { type: 'string', description: 'AT URI of the match.recommendation record that justified this assignment.' },
+          assignmentPolicy: { type: 'string', knownValues: ['top-ranked'], description: 'Policy used to select from the recommendation.' },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+const verificationResult: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.verification.result',
+  description: 'Written by the verifier after a task completion is submitted, before a reputation stamp is issued. Provides evidence-backed status for downstream attestors to reference.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'completionUri', 'verifierDid', 'verificationType', 'status', 'summary', 'evidence', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the verified task.posting.' },
+          completionUri: { type: 'string', description: 'AT URI of the verified task.completion.' },
+          verifierDid: { type: 'string', format: 'did', description: 'DID of the verifier.' },
+          verificationType: { type: 'string', knownValues: ['simulation-metrics'], description: 'What kind of verification was applied.' },
+          status: {
+            type: 'string',
+            knownValues: ['passed', 'failed', 'inconclusive'],
+            description: 'Outcome of the verification check.',
+          },
+          summary: { type: 'string', description: 'Human-readable summary of the verification result.' },
+          evidence: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Human-readable evidence points used to reach the status conclusion.',
+          },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 const ALL_LEXICONS: LexiconDoc[] = [
@@ -760,6 +861,9 @@ const ALL_LEXICONS: LexiconDoc[] = [
   toolDefinition,
   toolInvocation,
   taskReview,
+  matchRecommendation,
+  taskAssignment,
+  verificationResult,
 ];
 
 const LEXICON_MAP = new Map<string, LexiconDoc>(ALL_LEXICONS.map(l => [l.id, l]));

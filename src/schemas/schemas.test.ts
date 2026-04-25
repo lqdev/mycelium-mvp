@@ -313,8 +313,8 @@ describe('ReputationStampSchema', () => {
 // ─── SCHEMA_REGISTRY ──────────────────────────────────────────────────────────
 
 describe('SCHEMA_REGISTRY', () => {
-  it('contains all 16 record type schemas', () => {
-    expect(SCHEMA_REGISTRY.size).toBe(16);
+  it('contains all 19 record type schemas', () => {
+    expect(SCHEMA_REGISTRY.size).toBe(19);
     const expectedNsids = [
       'network.mycelium.agent.profile',
       'network.mycelium.agent.capability',

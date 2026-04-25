@@ -68,25 +68,41 @@ function generateAssessmentComment(
 
 // ─── Stamp creation ───────────────────────────────────────────────────────────
 
+export interface CreateStampParams {
+  attestorRepo: AgentRepository;
+  subjectDid: string;
+  taskUri: string;
+  completionUri: string;
+  taskDomain: string;
+  dimensions: ReputationDimensions;
+  intelligenceDid?: string;
+  reworkPenalty?: number;
+  knowledgeRefs?: ReputationStamp['knowledgeRefs'];
+  toolRefs?: ReputationStamp['toolRefs'];
+  attestorType?: ReputationStamp['attestorType'];
+  evidenceUris?: string[];
+}
+
 /**
  * Create a reputation stamp and write it to the attestor's repository.
  * The overall score, assessment, and comment are computed internally.
- *
- * @param reworkPenalty - Points subtracted from overallScore (default 0)
  */
-export function createStamp(
-  attestorRepo: AgentRepository,
-  subjectDid: string,
-  taskUri: string,
-  completionUri: string,
-  taskDomain: string,
-  dimensions: ReputationDimensions,
-  intelligenceDid?: string,
-  reworkPenalty = 0,
-  knowledgeRefs?: ReputationStamp['knowledgeRefs'],
-  toolRefs?: ReputationStamp['toolRefs'],
-  attestorType?: ReputationStamp['attestorType'],
-): { stamp: ReputationStamp; uri: string } {
+export function createStamp(params: CreateStampParams): { stamp: ReputationStamp; uri: string } {
+  const {
+    attestorRepo,
+    subjectDid,
+    taskUri,
+    completionUri,
+    taskDomain,
+    dimensions,
+    intelligenceDid,
+    reworkPenalty = 0,
+    knowledgeRefs,
+    toolRefs,
+    attestorType,
+    evidenceUris,
+  } = params;
+
   const rawScore = computeOverallScore(dimensions);
   const overallScore = Math.max(0, rawScore - reworkPenalty);
   const assessment = scoreToAssessment(overallScore);
@@ -110,6 +126,7 @@ export function createStamp(
     knowledgeRefs,
     toolRefs,
     attestorType,
+    evidenceUris,
     createdAt: now,
   };
 

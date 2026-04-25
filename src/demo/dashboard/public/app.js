@@ -368,6 +368,16 @@ function describeEvent(event) {
   if (col === 'network.mycelium.reputation.stamp') {
     return `${event.operation} stamp — ${record.taskDomain ?? '?'} score: ${Math.round(record.overallScore ?? 0)}`;
   }
+  if (col === 'network.mycelium.match.recommendation') {
+    const nCandidates = record.rankings?.length ?? 0;
+    return `${event.operation} match recommendation — ${nCandidates} candidate(s), policy: ${record.policy ?? '?'}`;
+  }
+  if (col === 'network.mycelium.task.assignment') {
+    return `${event.operation} task assignment — assignee: ${resolveHandle(record.assigneeDid ?? '?')} (${record.assignmentPolicy ?? '?'})`;
+  }
+  if (col === 'network.mycelium.verification.result') {
+    return `${event.operation} verification — ${record.status ?? '?'}: ${record.summary ?? ''}`;
+  }
   if (col === 'network.mycelium.intelligence.model') {
     return `${event.operation} model — ${record.name ?? event.rkey} (${record.modelOrigin ?? '?'})`;
   }
@@ -606,7 +616,13 @@ function openDetail(type, id) {
     .then((r) => { if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json(); })
     .then((data) => {
       if (type === 'agent')      renderAgentDetail(data);
-      if (type === 'task')       renderTaskDetail(data);
+      if (type === 'task') {
+        // Fetch trace in parallel then render with it
+        fetch(`/api/tasks/${encodeURIComponent(id)}/trace`)
+          .then((r) => r.ok ? r.json() : null)
+          .catch(() => null)
+          .then((trace) => renderTaskDetail(data, trace));
+      }
       if (type === 'event')      renderEventDetail(data);
       if (type === 'reputation') renderReputationDetail(data);
     })
@@ -708,7 +724,7 @@ function renderAgentDetail(data) {
   `;
 }
 
-function renderTaskDetail(data) {
+function renderTaskDetail(data, trace) {
   const titleEl = document.getElementById('detail-title');
   const subtitleEl = document.getElementById('detail-subtitle');
   const bodyEl = document.getElementById('detail-body');
@@ -783,11 +799,56 @@ function renderTaskDetail(data) {
     </div>
   `).join('');
 
-  const stampHtml = data.stamp ? `
+  const stampHtml = (data.stamps && data.stamps.length > 0) ? `
+    <div class="detail-section">
+      <div class="detail-section-title">Reputation Stamps (${data.stamps.length})</div>
+      ${data.stamps.map((s) => renderStampCard(s)).join('')}
+    </div>` : (data.stamp ? `
     <div class="detail-section">
       <div class="detail-section-title">Reputation Stamp</div>
       ${renderStampCard(data.stamp)}
-    </div>` : '';
+    </div>` : '');
+
+  // ── Proof Chain panel (WorkTrace) ──────────────────────────────────────────
+  const roleIcon = {
+    'requester':    '👤',
+    'work-index':   '📋',
+    'matcher':      '🔍',
+    'coordinator':  '🎯',
+    'worker':       '🤖',
+    'verifier':     '🔬',
+    'attestor':     '🏅',
+    'auditor':      '📊',
+  };
+  let proofChainHtml = '';
+  if (trace) {
+    const stepHtml = (trace.steps || []).map((step) => {
+      const icon = roleIcon[step.role] || '•';
+      const uri = step.uri ? `<a class="detail-link mono" style="font-size:9px;display:block;margin-top:2px;word-break:break-all" href="/api/record?uri=${encodeURIComponent(step.uri)}" target="_blank">${esc(step.uri.slice(0, 60))}…</a>` : '';
+      return `
+        <div class="proof-step">
+          <div class="proof-step-icon">${icon}</div>
+          <div class="proof-step-body">
+            <div class="proof-step-role">${esc(step.role)}</div>
+            <div class="proof-step-summary">${esc(step.summary)}</div>
+            ${uri}
+          </div>
+          ${step.timestamp ? `<div class="proof-step-time">${esc(formatTime(step.timestamp))}</div>` : ''}
+        </div>`;
+    }).join('') || '<div class="placeholder" style="padding:6px 0">No steps yet</div>';
+
+    const consequences = (trace.consequences || []).map((c) => `<li>${esc(c)}</li>`).join('');
+    const missing = (trace.missingEvidence || []).map((m) => `<li style="color:var(--yellow)">${esc(m)}</li>`).join('');
+
+    proofChainHtml = `
+      <div class="detail-section proof-chain-section">
+        <div class="detail-section-title">⛓ Proof Chain</div>
+        ${trace.summary ? `<div class="proof-chain-summary">${esc(trace.summary)}</div>` : ''}
+        <div class="proof-steps">${stepHtml}</div>
+        ${consequences ? `<div class="proof-consequences"><strong>Consequences:</strong><ul>${consequences}</ul></div>` : ''}
+        ${missing ? `<div class="proof-missing"><strong>Pending evidence:</strong><ul>${missing}</ul></div>` : ''}
+      </div>`;
+  }
 
   const rejectionsArr = data.rejections || [];
   const rejectionsHtml = rejectionsArr.length > 0 ? `
@@ -834,6 +895,7 @@ function renderTaskDetail(data) {
       ${claims}
     </div>
     ${completionHtml}
+    ${proofChainHtml}
     ${stampHtml}
     ${rejectionsHtml}
   `;

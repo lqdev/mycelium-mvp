@@ -24,6 +24,7 @@ import { initJetstream } from '../../atproto/jetstream.js';
 import { bootstrapKnowledgeProviders, type BootstrappedKnowledgeProvider } from '../../knowledge/index.js';
 import { bootstrapToolProviders, type BootstrappedToolProvider } from '../../tools/index.js';
 import { postTask, writeReview } from '../../orchestrator/wanted-board.js';
+import { buildWorkTrace } from '../../audit/work-trace.js';
 import type {
   AgentCapability,
   AgentProfile,
@@ -473,12 +474,12 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     : undefined;
   const completion = completionEvent ? (completionEvent.record as TaskCompletion) : null;
 
-  // Reputation stamp for this task
-  const stamp = taskUri
-    ? (state.firehose.log
-        .find((e) => e.collection === 'network.mycelium.reputation.stamp' && (e.record as ReputationStamp).taskUri === taskUri)
-        ?.record as ReputationStamp | undefined) ?? null
-    : null;
+  // Reputation stamps for this task (all attestors)
+  const stamps = taskUri
+    ? state.firehose.log
+        .filter((e) => e.collection === 'network.mycelium.reputation.stamp' && (e.record as ReputationStamp).taskUri === taskUri)
+        .map((e) => e.record as ReputationStamp)
+    : [];
 
   // Rejection history for this task
   const rejections = (taskUri ? state.mayor.rejectionLog.get(taskUri) : undefined)?.map(
@@ -527,7 +528,8 @@ function buildTaskDetail(state: DemoState, taskId: string) {
     dependents,
     claims,
     completion,
-    stamp,
+    stamps,
+    stamp: stamps[0] ?? null,
     rejections,
   };
 }
@@ -643,6 +645,15 @@ async function startServer(state: DemoState, port: number): Promise<void> {
     const detail = buildTaskDetail(state, req.params.id);
     if (!detail) return reply.status(404).send({ error: 'Task not found' });
     return detail;
+  });
+
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/trace', async (req, reply) => {
+    const taskId = req.params.id;
+    const taskDef = DASHBOARD_TEMPLATE.tasks.find((t) => t.id === taskId);
+    if (!taskDef) return reply.status(404).send({ error: 'Task not found' });
+    const info = state.mayor.postedTasks.get(taskId);
+    if (!info) return reply.status(404).send({ error: 'Task not yet posted', taskId });
+    return buildWorkTrace(state.firehose, info.uri, taskId, taskDef.title, state.mayorDid);
   });
 
   fastify.get<{ Params: { seq: string } }>('/api/firehose/:seq', async (req, reply) => {

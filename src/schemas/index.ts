@@ -264,6 +264,7 @@ export const ReputationStampSchema = z.object({
     success: z.boolean(),
   })).optional(),
   attestorType: z.enum(['mayor', 'requester', 'peer', 'verifier']).optional(),
+  evidenceUris: z.array(z.string()).optional(),
   dimensions: z.object({
     codeQuality: reputationScore,
     reliability: reputationScore,
@@ -379,6 +380,54 @@ export const TaskReviewSchema = z.object({
   createdAt: isoDateTime,
 });
 
+// ─── 17. MatchRecommendation ──────────────────────────────────────────────────
+
+export const MatchRecommendationSchema = z.object({
+  $type: z.literal('network.mycelium.match.recommendation'),
+  taskUri: atUri,
+  matcherDid: did,
+  policy: z.literal('trust-weighted'),
+  rankings: z.array(
+    z.object({
+      rank: z.number().int().min(1),
+      candidateDid: did,
+      claimUri: z.string().min(1),
+      score: z.number(),
+      reasons: z.array(z.string()),
+    }),
+  ),
+  selectedDid: did,
+  selectedClaimUri: z.string().min(1),
+  createdAt: isoDateTime,
+});
+
+// ─── 18. TaskAssignment ───────────────────────────────────────────────────────
+
+export const TaskAssignmentSchema = z.object({
+  $type: z.literal('network.mycelium.task.assignment'),
+  taskUri: atUri,
+  claimUri: z.string().min(1),
+  coordinatorDid: did,
+  assigneeDid: did,
+  matchRecommendationUri: z.string().min(1),
+  assignmentPolicy: z.literal('top-ranked'),
+  createdAt: isoDateTime,
+});
+
+// ─── 19. VerificationResult ───────────────────────────────────────────────────
+
+export const VerificationResultSchema = z.object({
+  $type: z.literal('network.mycelium.verification.result'),
+  taskUri: atUri,
+  completionUri: z.string().min(1),
+  verifierDid: did,
+  verificationType: z.literal('simulation-metrics'),
+  status: z.enum(['passed', 'failed', 'inconclusive']),
+  summary: z.string().min(1),
+  evidence: z.array(z.string()),
+  createdAt: isoDateTime,
+});
+
 // ─── Schema Registry ──────────────────────────────────────────────────────────
 
 export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
@@ -398,6 +447,9 @@ export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
   ['network.mycelium.tool.definition', ToolDefinitionSchema],
   ['network.mycelium.tool.invocation', ToolInvocationSchema],
   ['network.mycelium.task.review', TaskReviewSchema],
+  ['network.mycelium.match.recommendation', MatchRecommendationSchema],
+  ['network.mycelium.task.assignment', TaskAssignmentSchema],
+  ['network.mycelium.verification.result', VerificationResultSchema],
 ]);
 
 /**

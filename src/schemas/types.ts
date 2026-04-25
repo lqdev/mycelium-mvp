@@ -338,6 +338,8 @@ export interface ReputationStamp {
   knowledgeRefs?: Array<{ providerDid: string; queryHash: string; verificationLevel: string }>;
   toolRefs?: Array<{ toolDid: string; toolUri: string; success: boolean }>;
   attestorType?: 'mayor' | 'requester' | 'peer' | 'verifier';
+  /** AT URIs of records (e.g. verification.result) that justify this stamp. */
+  evidenceUris?: string[];
   dimensions: ReputationDimensions;
   overallScore: number;
   assessment: 'exceptional' | 'strong' | 'satisfactory' | 'needs_improvement' | 'unsatisfactory';
@@ -472,4 +474,60 @@ export interface Mayor {
   externalTaskUri?: string;
   /** DID of the external requester who posted the project task */
   externalTaskPosterDid?: string;
+}
+
+// ─── Proof-chain record types ─────────────────────────────────────────────────
+
+/**
+ * Written by the matcher/coordinator before assigning a task.
+ * Documents which candidates were considered and why the selected one won.
+ */
+export interface MatchRecommendation {
+  $type: 'network.mycelium.match.recommendation';
+  taskUri: string;
+  matcherDid: string;
+  policy: 'trust-weighted';
+  /** Ordered by rank (1 = best). Each entry includes the claim URI so the choice is traceable. */
+  rankings: Array<{
+    rank: number;
+    candidateDid: string;
+    claimUri: string;
+    score: number;
+    reasons: string[];
+  }>;
+  selectedDid: string;
+  selectedClaimUri: string;
+  createdAt: string;
+}
+
+/**
+ * Written by the coordinator when a task is formally assigned to a worker.
+ * Links the task, the winning claim, and the recommendation that justified the choice.
+ */
+export interface TaskAssignment {
+  $type: 'network.mycelium.task.assignment';
+  taskUri: string;
+  claimUri: string;
+  coordinatorDid: string;
+  assigneeDid: string;
+  matchRecommendationUri: string;
+  assignmentPolicy: 'top-ranked';
+  createdAt: string;
+}
+
+/**
+ * Written by the verifier after a completion is submitted and before a reputation stamp is issued.
+ * Provides evidence-backed status for downstream attestors to reference.
+ */
+export interface VerificationResult {
+  $type: 'network.mycelium.verification.result';
+  taskUri: string;
+  completionUri: string;
+  verifierDid: string;
+  verificationType: 'simulation-metrics';
+  status: 'passed' | 'failed' | 'inconclusive';
+  summary: string;
+  /** Human-readable evidence points used to reach the status conclusion. */
+  evidence: string[];
+  createdAt: string;
 }
