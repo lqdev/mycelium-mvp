@@ -184,6 +184,7 @@ export const TaskPostingSchema = z.object({
   assigneeDid: did.optional(),
   claimUris: z.array(z.string()).optional(),
   completionUri: z.string().optional(),
+  requesterDid: did.optional(),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
 });
@@ -262,6 +263,7 @@ export const ReputationStampSchema = z.object({
     toolUri: atUri,
     success: z.boolean(),
   })).optional(),
+  attestorType: z.enum(['mayor', 'requester', 'peer', 'verifier']).optional(),
   dimensions: z.object({
     codeQuality: reputationScore,
     reliability: reputationScore,
@@ -365,6 +367,18 @@ export const ToolInvocationSchema = z.object({
   createdAt: isoDateTime,
 });
 
+// ─── 16. TaskReview ───────────────────────────────────────────────────────────
+
+export const TaskReviewSchema = z.object({
+  $type: z.literal('network.mycelium.task.review'),
+  taskUri: atUri,
+  reviewerDid: did,
+  outcome: z.enum(['accepted', 'rejected', 'partial']),
+  score: z.number().min(0).max(100),
+  comment: z.string().optional(),
+  createdAt: isoDateTime,
+});
+
 // ─── Schema Registry ──────────────────────────────────────────────────────────
 
 export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
@@ -383,6 +397,7 @@ export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
   ['network.mycelium.tool.provider', ToolProviderSchema],
   ['network.mycelium.tool.definition', ToolDefinitionSchema],
   ['network.mycelium.tool.invocation', ToolInvocationSchema],
+  ['network.mycelium.task.review', TaskReviewSchema],
 ]);
 
 /**

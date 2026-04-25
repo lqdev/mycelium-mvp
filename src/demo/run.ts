@@ -7,7 +7,7 @@ import Table from 'cli-table3';
 import { createFirehose, subscribe } from '../firehose/index.js';
 import { bootstrapIntelligence } from '../intelligence/index.js';
 import { bootstrapAgents, createAgentRunner } from '../agents/engine.js';
-import { createMayor, DASHBOARD_TEMPLATE, startProject } from '../orchestrator/mayor.js';
+import { createMayor, DASHBOARD_TEMPLATE } from '../orchestrator/mayor.js';
 import { generateIdentity } from '../identity/index.js';
 import { createMemoryRepository, listRecords, getRecord } from '../repository/index.js';
 import { getStampsForAgent, aggregateReputation } from '../reputation/index.js';
@@ -16,6 +16,7 @@ import { CONSTANTS } from '../constants.js';
 import type { BootstrappedAgent } from '../agents/engine.js';
 import { createDuckDB } from '../storage/duckdb.js';
 import { initPersistence, loadIdentities, saveIdentity, shutdownPersistence } from '../storage/persistence.js';
+import { postTask, writeReview } from '../orchestrator/wanted-board.js';
 
 const isDryRun = process.argv.includes('--dry-run');
 if (isDryRun) {
@@ -134,6 +135,10 @@ async function main(): Promise<void> {
   const mayorIdentity = generateIdentity('mayor.mycelium.local', 'Mayor (Orchestrator)');
   const mayorRepo = createMemoryRepository(mayorIdentity, firehose);
   const mayor = createMayor(mayorIdentity, mayorRepo, firehose, DASHBOARD_TEMPLATE);
+
+  // Customer identity — an external DID that posts the project-level task
+  const customerIdentity = generateIdentity('customer.mycelium.local', 'Customer (Task Requester)');
+  const customerRepo = createMemoryRepository(customerIdentity, firehose);
 
   // ─── Step 5: Bootstrap agents ───────────────────────────────────────────────
   const { agents, newIdentities: newAgentIdentities } = bootstrapAgents(firehose, intelligence, savedIdentities);
@@ -285,7 +290,18 @@ async function main(): Promise<void> {
   console.log(taskTable.toString());
   console.log(chalk.dim('\n  📡 Tasks will be posted to Wanted Board as dependencies resolve...'));
 
-  startProject(mayor, 'Build the Mycelium Dashboard');
+  // Customer posts the project-level task to their own repo; Mayor discovers it via firehose
+  // and triggers startProject() internally (the firehose callback fires synchronously in putRecord).
+  const { uri: customerTaskUri } = postTask(customerRepo, {
+    title: DASHBOARD_TEMPLATE.projectPattern,
+    description: 'Build the Mycelium Dashboard — a full-stack federated agent orchestration UI.',
+    requiredCapabilities: [{ domain: 'project-management', tags: [], minProficiency: 'expert' }],
+    complexity: 'high',
+    priority: 'high',
+    requesterDid: customerIdentity.did,
+    context: { projectName: DASHBOARD_TEMPLATE.projectPattern, projectDescription: 'Top-level customer request.' },
+    deliverables: [],
+  });
 
   const initialPosted = mayor.postedTasks.size;
   console.log(chalk.dim(`  👁️  ${initialPosted} tasks posted (${DASHBOARD_TEMPLATE.tasks.length - initialPosted} gated by dependencies)`));
@@ -316,6 +332,15 @@ async function main(): Promise<void> {
     clearInterval(progressInterval);
     process.stdout.write('\n');
   }
+
+  // Customer writes a formal review — Mayor's firehose handler issues requester stamps
+  writeReview(customerRepo, {
+    taskUri: customerTaskUri,
+    reviewerDid: customerIdentity.did,
+    outcome: 'accepted',
+    score: 85,
+    comment: `All ${DASHBOARD_TEMPLATE.tasks.length} subtasks delivered on time.`,
+  });
 
   console.log(chalk.green('\n✅ All 8 tasks accepted!\n'));
 

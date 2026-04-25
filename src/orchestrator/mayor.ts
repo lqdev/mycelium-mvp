@@ -14,6 +14,7 @@ import type {
   TaskClaim,
   TaskCompletion,
   TaskPosting,
+  TaskReview,
 } from '../schemas/types.js';
 import { subscribe } from '../firehose/index.js';
 import { putRecord, getRecord } from '../repository/index.js';
@@ -200,6 +201,51 @@ function handleFirehoseEvent(
     const completion = event.record as TaskCompletion;
     const completionUri = `at://${event.did}/${event.collection}/${event.rkey}`;
     handleCompletion(mayor, completion, completionUri);
+  } else if (event.collection === 'network.mycelium.task.posting') {
+    // External task requester posted a project-level task — trigger decomposition.
+    // Guard: ignore our own posts and only handle the first external posting.
+    if (event.did === mayor.identity.did) return;
+    if (mayor.externalTaskUri) return;
+    const externalTask = event.record as TaskPosting;
+    mayor.externalTaskUri = `at://${event.did}/${event.collection}/${event.rkey}`;
+    mayor.externalTaskPosterDid = event.did;
+    startProject(mayor, externalTask.description);
+  } else if (event.collection === 'network.mycelium.task.review') {
+    const review = event.record as TaskReview;
+    // Only process reviews for our tracked external task from the verified requester.
+    if (review.taskUri !== mayor.externalTaskUri) return;
+    if (event.did !== mayor.externalTaskPosterDid) return;
+
+    // Issue requester stamps for all accepted subtasks.
+    const dim = review.score / 10;
+    const dimensions: ReputationDimensions = {
+      codeQuality: dim,
+      reliability: dim,
+      communication: dim,
+      creativity: dim,
+      efficiency: dim,
+    };
+    for (const [, info] of mayor.postedTasks) {
+      if (info.status !== 'accepted' || !info.completerDid || !info.completionUri) continue;
+      let taskDomain = 'software-engineering';
+      try {
+        const posting = getTask(mayor.repo, info.uri);
+        taskDomain = posting.requiredCapabilities[0]?.domain ?? taskDomain;
+      } catch { /* leave default */ }
+      createStamp(
+        mayor.repo,
+        info.completerDid,
+        info.uri,
+        info.completionUri,
+        taskDomain,
+        dimensions,
+        undefined,
+        0,
+        undefined,
+        undefined,
+        'requester',
+      );
+    }
   }
 }
 
@@ -314,7 +360,7 @@ function handleCompletion(
 
   // Find this task in postedTasks tracking
   let taskId: string | undefined;
-  let taskInfo: { status: string; uri: string; attempts: number } | undefined;
+  let taskInfo: { status: string; uri: string; attempts: number; completionUri?: string; completerDid?: string } | undefined;
   for (const [id, info] of mayor.postedTasks) {
     if (info.uri === taskUri) { taskId = id; taskInfo = info; break; }
   }
@@ -360,6 +406,7 @@ function handleCompletion(
       0,
       completion.knowledgeUsed,
       completion.toolsUsed,
+      'mayor',
     );
 
     // Update agent registry after rejection
@@ -409,6 +456,7 @@ function handleCompletion(
     0,
     completion.knowledgeUsed,
     completion.toolsUsed,
+    'mayor',
   );
 
   // Update agent registry: remove from activeTasks, refresh reputation
@@ -419,10 +467,12 @@ function handleCompletion(
     entry.reputation = stamps.length > 0 ? aggregateReputation(stamps) : null;
   }
 
-  // Mark task as accepted in postedTasks tracking
+  // Mark task as accepted in postedTasks tracking, storing completion details for requester stamps
   for (const [, info] of mayor.postedTasks) {
     if (info.uri === taskUri) {
       info.status = 'accepted';
+      info.completionUri = completionUri;
+      info.completerDid = completion.completerDid;
       break;
     }
   }

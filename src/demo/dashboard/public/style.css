@@ -148,6 +148,31 @@ body {
   text-align: center;
 }
 
+/* ── Participant cards & type badges ─────────────────────────────────────── */
+
+.participant-group-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 4px 2px;
+  margin-top: 2px;
+}
+
+.participant-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.type-badge {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 /* ── Agent cards ─────────────────────────────────────────────────────────── */
 
 .agent-card {
@@ -434,12 +459,14 @@ body {
 
 .agent-card[role="button"],
 .task-card[role="button"],
-.rep-card[role="button"] {
+.rep-card[role="button"],
+.participant-card[role="button"] {
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.agent-card[role="button"]:hover {
+.agent-card[role="button"]:hover,
+.participant-card[role="button"]:hover {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(88,166,255,0.15);
 }

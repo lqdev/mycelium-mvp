@@ -85,6 +85,7 @@ export function createStamp(
   reworkPenalty = 0,
   knowledgeRefs?: ReputationStamp['knowledgeRefs'],
   toolRefs?: ReputationStamp['toolRefs'],
+  attestorType?: ReputationStamp['attestorType'],
 ): { stamp: ReputationStamp; uri: string } {
   const rawScore = computeOverallScore(dimensions);
   const overallScore = Math.max(0, rawScore - reworkPenalty);
@@ -108,6 +109,7 @@ export function createStamp(
     comment,
     knowledgeRefs,
     toolRefs,
+    attestorType,
     createdAt: now,
   };
 
@@ -176,7 +178,8 @@ export function aggregateReputation(
     const dw = queryDomain && stamp.taskDomain !== queryDomain
       ? CONSTANTS.REPUTATION_DOMAIN_OTHER
       : CONSTANTS.REPUTATION_DOMAIN_MATCH;
-    const w = rw * dw;
+    const aw = CONSTANTS.REPUTATION_ATTESTOR_WEIGHTS[stamp.attestorType ?? 'mayor'];
+    const w = rw * dw * aw;
 
     for (const key of Object.keys(dims) as Array<keyof ReputationDimensions>) {
       dims[key] += stamp.dimensions[key] * w;
@@ -210,19 +213,40 @@ export function aggregateReputation(
     }
   }
 
+  // Per-attestor breakdown
+  const breakdownByAttestor: NonNullable<AggregatedReputation['breakdownByAttestor']> = {};
+  for (const stamp of stamps) {
+    const at = stamp.attestorType ?? 'mayor';
+    const b = breakdownByAttestor[at];
+    if (!b) {
+      breakdownByAttestor[at] = { count: 1, avgScore: stamp.overallScore };
+    } else {
+      const newCount = b.count + 1;
+      breakdownByAttestor[at] = {
+        count: newCount,
+        avgScore: (b.avgScore * b.count + stamp.overallScore) / newCount,
+      };
+    }
+  }
+
+  // Count unique tasks (by taskUri) rather than total stamps
+  const uniqueTaskUris = new Set(stamps.map((s) => s.taskUri));
+  const totalTasks = uniqueTaskUris.size;
+
   // Trend detection (sliding window of up to TREND_WINDOW_SIZE stamps)
   const recentTrend = computeTrend(sorted);
 
   // Trust level
   const did = stamps[0]!.subjectDid;
-  const trustLevel = getTrustLevel({ totalTasks: stamps.length, overallScore });
+  const trustLevel = getTrustLevel({ totalTasks, overallScore });
 
   return {
     did,
-    totalTasks: stamps.length,
+    totalTasks,
     averageScores,
     overallScore,
     taskBreakdown,
+    breakdownByAttestor,
     recentTrend,
     trustLevel,
   };

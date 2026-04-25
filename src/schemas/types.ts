@@ -258,8 +258,19 @@ export interface TaskPosting {
   assigneeDid?: string;
   claimUris?: string[];
   completionUri?: string;
+  requesterDid?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaskReview {
+  $type: 'network.mycelium.task.review';
+  taskUri: string;
+  reviewerDid: string;
+  outcome: 'accepted' | 'rejected' | 'partial';
+  score: number;
+  comment?: string;
+  createdAt: string;
 }
 
 export interface TaskClaim {
@@ -326,6 +337,7 @@ export interface ReputationStamp {
   intelligenceDid?: string;
   knowledgeRefs?: Array<{ providerDid: string; queryHash: string; verificationLevel: string }>;
   toolRefs?: Array<{ toolDid: string; toolUri: string; success: boolean }>;
+  attestorType?: 'mayor' | 'requester' | 'peer' | 'verifier';
   dimensions: ReputationDimensions;
   overallScore: number;
   assessment: 'exceptional' | 'strong' | 'satisfactory' | 'needs_improvement' | 'unsatisfactory';
@@ -339,6 +351,7 @@ export interface AggregatedReputation {
   averageScores: ReputationDimensions;
   overallScore: number;
   taskBreakdown: Record<string, { count: number; avgScore: number }>;
+  breakdownByAttestor?: Record<string, { count: number; avgScore: number }>;
   recentTrend: 'improving' | 'stable' | 'declining';
   trustLevel: 'newcomer' | 'established' | 'trusted' | 'expert';
 }
@@ -452,7 +465,11 @@ export interface Mayor {
   firehose: Firehose;
   template: DecompositionTemplate;
   agentRegistry: Map<string, AgentRegistryEntry>;
-  postedTasks: Map<string, { status: string; uri: string; attempts: number }>;
+  postedTasks: Map<string, { status: string; uri: string; attempts: number; completionUri?: string; completerDid?: string }>;
   /** taskUri → list of rejection events for demo display */
   rejectionLog: Map<string, Array<{ agentDid: string; reason: string }>>;
+  /** URI of the external customer task.posting that triggered startProject */
+  externalTaskUri?: string;
+  /** DID of the external requester who posted the project task */
+  externalTaskPosterDid?: string;
 }

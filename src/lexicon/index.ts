@@ -715,6 +715,32 @@ const toolInvocation: LexiconDoc = {
   },
 };
 
+// ─── Task Review Lexicon ──────────────────────────────────────────────────────
+
+const taskReview: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.task.review',
+  description: 'A formal acceptance or rejection issued by the task requester after reviewing a task completion. Enables composable trust: any DID that posted a task.posting can issue a review.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'reviewerDid', 'outcome', 'score', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the task.posting being reviewed.' },
+          reviewerDid: { type: 'string', format: 'did', description: 'DID of the requester issuing the review.' },
+          outcome: { type: 'string', knownValues: ['accepted', 'rejected', 'partial'], description: 'Final disposition of the task.' },
+          score: { type: 'integer', minimum: 0, maximum: 100, description: 'Overall satisfaction score (0-100).' },
+          comment: { type: 'string', description: 'Optional requester commentary.' },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 const ALL_LEXICONS: LexiconDoc[] = [
@@ -733,6 +759,7 @@ const ALL_LEXICONS: LexiconDoc[] = [
   toolProvider,
   toolDefinition,
   toolInvocation,
+  taskReview,
 ];
 
 const LEXICON_MAP = new Map<string, LexiconDoc>(ALL_LEXICONS.map(l => [l.id, l]));

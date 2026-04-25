@@ -300,3 +300,66 @@ export function shouldClaim(
 
   return true;
 }
+
+// ─── AppView helpers ──────────────────────────────────────────────────────────
+
+export type DiscoveredTask = {
+  uri: string;
+  posterDid: string;
+  task: TaskPosting;
+};
+
+/**
+ * Scan the firehose log for task.posting events from ANY DID.
+ * Deduplicates by URI (latest event wins). Optionally filters by status.
+ */
+export function discoverTasks(
+  firehoseLog: Array<{ uri: string; did: string; collection: string; record: unknown }>,
+  statusFilter?: TaskPosting['status'],
+): DiscoveredTask[] {
+  const byUri = new Map<string, DiscoveredTask>();
+
+  for (const event of firehoseLog) {
+    if (event.collection !== 'network.mycelium.task.posting') continue;
+    byUri.set(event.uri, {
+      uri: event.uri,
+      posterDid: event.did,
+      task: event.record as TaskPosting,
+    });
+  }
+
+  const all = Array.from(byUri.values());
+  return statusFilter ? all.filter((d) => d.task.status === statusFilter) : all;
+}
+
+export type WriteReviewSpec = {
+  taskUri: string;
+  reviewerDid: string;
+  outcome: 'accepted' | 'rejected' | 'partial';
+  score: number;
+  comment?: string;
+};
+
+/**
+ * Write a task.review record to the requester's repository.
+ */
+export function writeReview(
+  requesterRepo: AgentRepository,
+  spec: WriteReviewSpec,
+): { uri: string; rkey: string } {
+  const rkey = `review-${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const content = {
+    $type: 'network.mycelium.task.review' as const,
+    taskUri: spec.taskUri,
+    reviewerDid: spec.reviewerDid,
+    outcome: spec.outcome,
+    score: spec.score,
+    comment: spec.comment,
+    createdAt: now,
+  };
+
+  const result = putRecord(requesterRepo, 'network.mycelium.task.review', rkey, content);
+  return { uri: result.uri, rkey };
+}
