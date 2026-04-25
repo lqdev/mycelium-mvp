@@ -308,6 +308,8 @@ body {
 .event-type.task       { background: rgba(210,153,34,0.15);  color: var(--yellow); }
 .event-type.reputation { background: rgba(63,185,80,0.15);   color: var(--green); }
 .event-type.intel      { background: rgba(188,140,255,0.15); color: var(--purple); }
+.event-type.knowledge  { background: rgba(139,148,255,0.20); color: #8b94ff; }
+.event-type.tool       { background: rgba(255,165,0,0.15);   color: #ffa500; }
 .event-type.other      { background: rgba(255,255,255,0.05); color: var(--muted); }
 
 /* ── Filter bar ──────────────────────────────────────────────────────────── */

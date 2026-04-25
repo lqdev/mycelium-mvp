@@ -555,6 +555,166 @@ const reputationStamp: LexiconDoc = {
   },
 };
 
+// ─── Knowledge Lexicons ───────────────────────────────────────────────────────
+
+const knowledgeProvider: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.knowledge.provider',
+  description: 'A knowledge base provider with a DID, endpoint, and declared capabilities.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'literal:self',
+      record: {
+        type: 'object',
+        required: ['did', 'name', 'description', 'endpoint', 'capabilities', 'domains', 'verificationMethod', 'createdAt', 'updatedAt'],
+        properties: {
+          did: { type: 'string', format: 'did', description: 'The knowledge provider\'s DID.' },
+          name: { type: 'string', description: 'Human-readable name.' },
+          description: { type: 'string', description: 'What this knowledge base contains.' },
+          endpoint: { type: 'string', description: 'HTTP endpoint for querying.' },
+          capabilities: { type: 'array', items: { type: 'string' }, description: 'e.g. nl-question-answering, document-retrieval.' },
+          domains: { type: 'array', items: { type: 'string' }, description: 'Knowledge domains covered.' },
+          verificationMethod: { type: 'string', knownValues: ['none', 'cid'], description: 'How document provenance can be verified.' },
+          createdAt: { type: 'string', format: 'datetime' },
+          updatedAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+const knowledgeDocument: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.knowledge.document',
+  description: 'An individual knowledge item published to a PDS. The MST assigns a CID for content-addressable verification.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['providerDid', 'title', 'content', 'domains', 'contentHash', 'version', 'createdAt', 'updatedAt'],
+        properties: {
+          providerDid: { type: 'string', format: 'did', description: 'Knowledge provider that owns this document.' },
+          title: { type: 'string', description: 'Document title.' },
+          content: { type: 'string', description: 'The actual knowledge text.' },
+          domains: { type: 'array', items: { type: 'string' }, description: 'Domains this document covers.' },
+          contentHash: { type: 'string', description: 'SHA-256 of content for dedup and integrity.' },
+          version: { type: 'string', description: 'Document version.' },
+          createdAt: { type: 'string', format: 'datetime' },
+          updatedAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+const knowledgeQuery: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.knowledge.query',
+  description: 'Audit record: an agent consulted a knowledge provider for a task.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'providerDid', 'queryHash', 'resultCount', 'success', 'verificationLevel', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'The task this query was made for.' },
+          providerDid: { type: 'string', format: 'did', description: 'DID of the knowledge provider queried.' },
+          queryHash: { type: 'string', description: 'SHA-256 of the question (not the question itself).' },
+          contextCids: { type: 'array', items: { type: 'string' }, description: 'CIDs of knowledge.document records used (Level 2).' },
+          resultCount: { type: 'integer', minimum: 0, description: 'Number of documents returned.' },
+          success: { type: 'string', description: 'Whether the query succeeded (endpoint reachable).' },
+          errorCode: { type: 'string', knownValues: ['ENDPOINT_UNREACHABLE', 'TIMEOUT'], description: 'Error if query failed.' },
+          verificationLevel: { type: 'string', knownValues: ['claimed', 'cid'], description: 'Level of provenance verification.' },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+// ─── Tool Lexicons ────────────────────────────────────────────────────────────
+
+const toolProvider: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.tool.provider',
+  description: 'A tool service provider with a DID and endpoint.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'literal:self',
+      record: {
+        type: 'object',
+        required: ['did', 'name', 'description', 'endpoint', 'createdAt', 'updatedAt'],
+        properties: {
+          did: { type: 'string', format: 'did', description: 'The tool provider\'s DID.' },
+          name: { type: 'string', description: 'Human-readable name.' },
+          description: { type: 'string', description: 'What tools this provider offers.' },
+          endpoint: { type: 'string', description: 'HTTP endpoint for invoking tools.' },
+          createdAt: { type: 'string', format: 'datetime' },
+          updatedAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+const toolDefinition: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.tool.definition',
+  description: 'An individual tool definition. CID-addressable via PDS MST. tool.invocations reference this AT URI.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['providerDid', 'name', 'description', 'inputSchema', 'category', 'sideEffects', 'createdAt', 'updatedAt'],
+        properties: {
+          providerDid: { type: 'string', format: 'did', description: 'Tool provider that owns this definition.' },
+          name: { type: 'string', description: 'Machine-readable tool name (e.g. web-search).' },
+          description: { type: 'string', description: 'What this tool does.' },
+          inputSchema: { type: 'string', description: 'JSON Schema for tool inputs (stored as object).' },
+          outputSchema: { type: 'string', description: 'JSON Schema for tool outputs (optional).' },
+          category: { type: 'string', knownValues: ['retrieval', 'execution', 'communication', 'generation'], description: 'Functional category.' },
+          sideEffects: { type: 'string', description: 'Whether this tool modifies external state.' },
+          createdAt: { type: 'string', format: 'datetime' },
+          updatedAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
+const toolInvocation: LexiconDoc = {
+  lexicon: 1,
+  id: 'network.mycelium.tool.invocation',
+  description: 'Audit record: an agent invoked a tool for a task. References the tool.definition AT URI.',
+  defs: {
+    main: {
+      type: 'record',
+      key: 'any',
+      record: {
+        type: 'object',
+        required: ['taskUri', 'toolDid', 'toolUri', 'inputHash', 'success', 'createdAt'],
+        properties: {
+          taskUri: { type: 'string', format: 'at-uri', description: 'The task this invocation was made for.' },
+          toolDid: { type: 'string', format: 'did', description: 'DID of the tool provider.' },
+          toolUri: { type: 'string', format: 'at-uri', description: 'AT URI of the tool.definition record invoked.' },
+          inputHash: { type: 'string', description: 'SHA-256 of serialized inputs.' },
+          success: { type: 'string', description: 'Whether the invocation succeeded.' },
+          errorCode: { type: 'string', description: 'Error code if invocation failed.' },
+          createdAt: { type: 'string', format: 'datetime' },
+        },
+      },
+    },
+  },
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 const ALL_LEXICONS: LexiconDoc[] = [
@@ -567,6 +727,12 @@ const ALL_LEXICONS: LexiconDoc[] = [
   taskClaim,
   taskCompletion,
   reputationStamp,
+  knowledgeProvider,
+  knowledgeDocument,
+  knowledgeQuery,
+  toolProvider,
+  toolDefinition,
+  toolInvocation,
 ];
 
 const LEXICON_MAP = new Map<string, LexiconDoc>(ALL_LEXICONS.map(l => [l.id, l]));

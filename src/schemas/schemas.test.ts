@@ -312,8 +312,8 @@ describe('ReputationStampSchema', () => {
 // ─── SCHEMA_REGISTRY ──────────────────────────────────────────────────────────
 
 describe('SCHEMA_REGISTRY', () => {
-  it('contains all 9 record type schemas', () => {
-    expect(SCHEMA_REGISTRY.size).toBe(9);
+  it('contains all 15 record type schemas', () => {
+    expect(SCHEMA_REGISTRY.size).toBe(15);
     const expectedNsids = [
       'network.mycelium.agent.profile',
       'network.mycelium.agent.capability',
@@ -324,6 +324,12 @@ describe('SCHEMA_REGISTRY', () => {
       'network.mycelium.task.claim',
       'network.mycelium.task.completion',
       'network.mycelium.reputation.stamp',
+      'network.mycelium.knowledge.provider',
+      'network.mycelium.knowledge.document',
+      'network.mycelium.knowledge.query',
+      'network.mycelium.tool.provider',
+      'network.mycelium.tool.definition',
+      'network.mycelium.tool.invocation',
     ];
     for (const nsid of expectedNsids) {
       expect(SCHEMA_REGISTRY.has(nsid), `Missing schema: ${nsid}`).toBe(true);

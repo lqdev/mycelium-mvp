@@ -83,6 +83,8 @@ export function createStamp(
   dimensions: ReputationDimensions,
   intelligenceDid?: string,
   reworkPenalty = 0,
+  knowledgeRefs?: ReputationStamp['knowledgeRefs'],
+  toolRefs?: ReputationStamp['toolRefs'],
 ): { stamp: ReputationStamp; uri: string } {
   const rawScore = computeOverallScore(dimensions);
   const overallScore = Math.max(0, rawScore - reworkPenalty);
@@ -104,6 +106,8 @@ export function createStamp(
     overallScore,
     assessment,
     comment,
+    knowledgeRefs,
+    toolRefs,
     createdAt: now,
   };
 

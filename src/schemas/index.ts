@@ -252,6 +252,16 @@ export const ReputationStampSchema = z.object({
   completionUri: atUri,
   taskDomain: z.string().min(1),
   intelligenceDid: did.optional(),
+  knowledgeRefs: z.array(z.object({
+    providerDid: did,
+    queryHash: z.string().min(1),
+    verificationLevel: z.string().min(1),
+  })).optional(),
+  toolRefs: z.array(z.object({
+    toolDid: did,
+    toolUri: atUri,
+    success: z.boolean(),
+  })).optional(),
   dimensions: z.object({
     codeQuality: reputationScore,
     reliability: reputationScore,
@@ -271,6 +281,90 @@ export const ReputationStampSchema = z.object({
   createdAt: isoDateTime,
 });
 
+// ─── 10. KnowledgeProvider ────────────────────────────────────────────────────
+
+export const KnowledgeProviderSchema = z.object({
+  $type: z.literal('network.mycelium.knowledge.provider'),
+  did: did,
+  name: z.string().min(1),
+  description: z.string().min(1),
+  endpoint: z.string().url(),
+  capabilities: z.array(z.string().min(1)),
+  domains: z.array(z.string().min(1)),
+  verificationMethod: z.enum(['none', 'cid']),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+});
+
+// ─── 11. KnowledgeDocument ────────────────────────────────────────────────────
+
+export const KnowledgeDocumentSchema = z.object({
+  $type: z.literal('network.mycelium.knowledge.document'),
+  providerDid: did,
+  title: z.string().min(1),
+  content: z.string().min(1),
+  domains: z.array(z.string().min(1)),
+  contentHash: z.string().min(1),
+  version: z.string().min(1),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+});
+
+// ─── 12. KnowledgeQuery ───────────────────────────────────────────────────────
+
+export const KnowledgeQuerySchema = z.object({
+  $type: z.literal('network.mycelium.knowledge.query'),
+  taskUri: atUri,
+  providerDid: did,
+  queryHash: z.string().min(1),
+  contextCids: z.array(z.string().min(1)).optional(),
+  resultCount: z.number().int().min(0),
+  success: z.boolean(),
+  errorCode: z.string().optional(),
+  verificationLevel: z.enum(['claimed', 'cid']),
+  createdAt: isoDateTime,
+});
+
+// ─── 13. ToolProvider ─────────────────────────────────────────────────────────
+
+export const ToolProviderSchema = z.object({
+  $type: z.literal('network.mycelium.tool.provider'),
+  did: did,
+  name: z.string().min(1),
+  description: z.string().min(1),
+  endpoint: z.string().url(),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+});
+
+// ─── 14. ToolDefinition ───────────────────────────────────────────────────────
+
+export const ToolDefinitionSchema = z.object({
+  $type: z.literal('network.mycelium.tool.definition'),
+  providerDid: did,
+  name: z.string().min(1),
+  description: z.string().min(1),
+  inputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.unknown()).optional(),
+  category: z.enum(['retrieval', 'execution', 'communication', 'generation']),
+  sideEffects: z.boolean(),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+});
+
+// ─── 15. ToolInvocation ───────────────────────────────────────────────────────
+
+export const ToolInvocationSchema = z.object({
+  $type: z.literal('network.mycelium.tool.invocation'),
+  taskUri: atUri,
+  toolDid: did,
+  toolUri: atUri,
+  inputHash: z.string().min(1),
+  success: z.boolean(),
+  errorCode: z.string().optional(),
+  createdAt: isoDateTime,
+});
+
 // ─── Schema Registry ──────────────────────────────────────────────────────────
 
 export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
@@ -283,6 +377,12 @@ export const SCHEMA_REGISTRY = new Map<string, z.ZodObject<z.ZodRawShape>>([
   ['network.mycelium.task.claim', TaskClaimSchema],
   ['network.mycelium.task.completion', TaskCompletionSchema],
   ['network.mycelium.reputation.stamp', ReputationStampSchema],
+  ['network.mycelium.knowledge.provider', KnowledgeProviderSchema],
+  ['network.mycelium.knowledge.document', KnowledgeDocumentSchema],
+  ['network.mycelium.knowledge.query', KnowledgeQuerySchema],
+  ['network.mycelium.tool.provider', ToolProviderSchema],
+  ['network.mycelium.tool.definition', ToolDefinitionSchema],
+  ['network.mycelium.tool.invocation', ToolInvocationSchema],
 ]);
 
 /**

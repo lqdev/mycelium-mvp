@@ -27,6 +27,8 @@ function classifyCollection(collection) {
   if (collection.startsWith('network.mycelium.task')) return 'task';
   if (collection.startsWith('network.mycelium.reputation')) return 'reputation';
   if (collection.startsWith('network.mycelium.intelligence')) return 'intel';
+  if (collection.startsWith('network.mycelium.knowledge')) return 'knowledge';
+  if (collection.startsWith('network.mycelium.tool')) return 'tool';
   return 'other';
 }
 
@@ -234,6 +236,24 @@ function describeEvent(event) {
   }
   if (col === 'network.mycelium.intelligence.provider') {
     return `${event.operation} provider — ${record.name ?? event.rkey} (${record.providerType ?? '?'})`;
+  }
+  if (col === 'network.mycelium.knowledge.provider') {
+    return `${event.operation} knowledge provider — ${record.name ?? event.rkey}`;
+  }
+  if (col === 'network.mycelium.knowledge.document') {
+    return `${event.operation} knowledge doc — ${record.title ?? event.rkey}`;
+  }
+  if (col === 'network.mycelium.knowledge.query') {
+    return `${event.operation} knowledge query — ${record.verificationLevel ?? 'claimed'} (${record.resultCount ?? 0} results)`;
+  }
+  if (col === 'network.mycelium.tool.provider') {
+    return `${event.operation} tool provider — ${record.name ?? event.rkey}`;
+  }
+  if (col === 'network.mycelium.tool.definition') {
+    return `${event.operation} tool definition — ${record.name ?? event.rkey} (${record.category ?? '?'})`;
+  }
+  if (col === 'network.mycelium.tool.invocation') {
+    return `${event.operation} tool invocation — ${record.success ? '✅' : '❌'} ${record.toolUri ? record.toolUri.split('/').pop() : event.rkey}`;
   }
   return `${event.operation} ${event.collection} [${event.rkey}]`;
 }
