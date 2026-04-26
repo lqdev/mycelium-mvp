@@ -99,6 +99,20 @@ function participantEmoji(type) {
   return map[type] || '●';
 }
 
+function traceRoleLabel(role) {
+  const map = {
+    requester: 'Human Requester',
+    'work-index': 'Work Index / Wanted Board',
+    matcher: 'Matcher (Mayor Bundle)',
+    coordinator: 'Coordinator (Mayor Bundle)',
+    worker: 'Worker Agent',
+    verifier: 'Verifier (Mayor Bundle)',
+    attestor: 'Attestor',
+    auditor: 'Auditor',
+  };
+  return map[role] || role;
+}
+
 function esc(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -164,13 +178,15 @@ function renderParticipantCard(p) {
         <div class="agent-header">
           ${badge}
           <span class="agent-handle">${esc(p.handle)}</span>
-          <span style="color:var(--muted);font-size:11px">Orchestrator</span>
+          <span style="color:var(--muted);font-size:11px">Mayor Bundle</span>
         </div>
         <div class="agent-did">${esc(shortDid(p.did))}</div>
         <div class="agent-rep-mini">
           <span>🗂️ ${p.tasksManaged || 0} managed</span>
           <span style="color:var(--border)">·</span>
           <span>✅ ${p.tasksAccepted || 0} accepted</span>
+          <span style="color:var(--border)">·</span>
+          <span>matcher/coordinator/verifier</span>
         </div>
       </div>
     `;
@@ -202,8 +218,8 @@ function renderParticipants() {
 
   const groups = [
     { type: 'user',      label: 'Human Users' },
-    { type: 'mayor',     label: 'Orchestrator' },
-    { type: 'agent',     label: 'AI Agents' },
+    { type: 'mayor',     label: 'Mayor Bundle' },
+    { type: 'agent',     label: 'Worker Agents' },
     { type: 'tool',      label: 'Tool Providers' },
     { type: 'knowledge', label: 'Knowledge Providers' },
   ];
@@ -829,7 +845,7 @@ function renderTaskDetail(data, trace) {
         <div class="proof-step">
           <div class="proof-step-icon">${icon}</div>
           <div class="proof-step-body">
-            <div class="proof-step-role">${esc(step.role)}</div>
+            <div class="proof-step-role">${esc(traceRoleLabel(step.role))}</div>
             <div class="proof-step-summary">${esc(step.summary)}</div>
             ${uri}
           </div>

@@ -8,7 +8,7 @@
 
 ## Scenario: "Build the Mycelium Dashboard"
 
-A human operator asks an orchestrator to build a web dashboard. The orchestrator decomposes the work, posts tasks to the Wanted Board, and a team of specialized agents coordinate to deliver the project — all using the Mycelium protocol stack.
+A human operator asks an orchestrator to build a web dashboard. The orchestrator decomposes the work, posts tasks to the Wanted Board, and a team of specialized agents coordinate to deliver the project — all using the Mycelium protocol stack. The dashboard now exposes a WorkTrace proof chain so an observer can see who posted, claimed, matched, assigned, completed, verified, and stamped each task.
 
 ---
 
@@ -80,7 +80,7 @@ A human operator asks an orchestrator to build a web dashboard. The orchestrator
       ├── llama-3-70b       did:key:z6MkLL3...  (code-gen, local-first)
       └── codellama         did:key:z6MkCL2...  (code-specific, local-first)
 
-  🤖 mayor    did:key:z6MkqZN...v9X  Orchestrator
+  🏛️ mayor    did:key:z6MkqZN...v9X  Mayor Bundle (matcher/coordinator/verifier/attestor)
      └── (subscribing to firehose...)
 
 ✅ 7 agents bootstrapped | 2 providers | 6 models | 21 capability records | 9 repositories created
@@ -206,9 +206,10 @@ Task 8: "Deploy to staging" (devops/low)
 ```
 1. Mayor evaluates claims for each task
 2. Considers: reputation score, proficiency match, confidence level
-3. Assigns the best candidate for each task
-4. Updates task.posting records with assignee DID
-5. Broadcasts assignment events via firehose
+3. Writes a match.recommendation record with ranked candidates and reasons
+4. Writes a task.assignment record linking the selected claim to that recommendation
+5. Updates task.posting records with assignee DID
+6. Broadcasts assignment events via firehose
 ```
 
 ### Console Output
@@ -254,6 +255,8 @@ Task 8: "Deploy to staging"
 
 ### What This Proves
 - **Reputation-Informed Decisions:** Higher reputation wins competitive bids
+- **Explainable Matching:** The selected worker is backed by a match.recommendation record, not just an in-memory choice
+- **Coordinator Commitment:** The task.assignment record links task, claim, assignee, and recommendation
 - **Load Balancing:** Task load considered in assignment decisions
 - **Trust Bootstrapping:** Newcomers (forge) get low-complexity tasks to build reputation
 - **Domain Specialization:** Cipher wins auth task despite lower overall rep (domain expertise)
@@ -266,9 +269,10 @@ Task 8: "Deploy to staging"
 ```
 1. Assigned agents "execute" their tasks (simulated with delays)
 2. Each agent writes a task.completion record with artifacts and metrics
-3. One task (forge's card component) is initially rejected for quality
-4. Forge reworks and resubmits
-5. Firehose broadcasts completion events
+3. The verifier role writes a verification.result record for each completion
+4. One task (forge's card component) is initially rejected for quality
+5. Forge reworks and resubmits
+6. Firehose broadcasts completion and verification events
 ```
 
 ### Console Output
@@ -338,7 +342,8 @@ Task 8: "Deploy to staging"
 
 ### What This Proves
 - **Task Completion Records:** Verifiable work outputs with cryptographic hashes
-- **Quality Gates:** Orchestrator can reject work; agents rework
+- **Quality Gates:** The Mayor Bundle can reject work; agents rework
+- **Verification Before Stamping:** Each acceptance or rejection has a verification.result record that downstream stamps can reference
 - **Parallel Execution:** Multiple agents work concurrently
 - **Dependency Management:** Tests run after API/UI; deploy runs after CI/CD
 - **Intelligence Attribution:** Every task completion records which intelligence powered the work
@@ -349,11 +354,11 @@ Task 8: "Deploy to staging"
 
 ### What Happens
 ```
-1. Mayor issues reputation.stamp for each completed task
-2. Stamps include multidimensional scores
+1. Mayor Bundle issues reputation.stamp for each completed task
+2. Stamps include multidimensional scores and evidenceUris pointing at verification results
 3. Reputation aggregator computes updated trust levels
 4. Forge's rework affects their reliability score
-5. Character sheets are displayed for all agents
+5. Character sheets and task Proof Chains are displayed in the dashboard
 ```
 
 ### Console Output
@@ -402,6 +407,8 @@ Task 8: "Deploy to staging"
 - **Multidimensional Reputation:** Not a single number — detailed "character sheet"
 - **Signed Attestations:** Each stamp is cryptographically signed by the attestor
 - **Attestor Ownership:** Stamps live in the Mayor's repo, not the agents'
+- **Evidence Links:** Stamps reference verification records through evidenceUris
+- **Proof Chain:** WorkTrace explains the path from request to claim to assignment to verification to stamp
 - **Consequences:** Poor work (rework) produces lower reputation scores
 - **Trust Levels:** Computed from aggregated stamp history
 - **Trust Chain:** Reputation stamps include the intelligence DID — full accountability chain
@@ -459,11 +466,14 @@ Task 8: "Deploy to staging"
   This demonstration showed:
   • Self-sovereign identity for agents, providers, and models (did:key)
   • Intelligence as a first-class primitive (providers and models have DIDs)
-  • Agent-owned data repositories (SQLite PDS)
+  • Agent-owned records with DuckDB persistence and optional PDS mirroring
   • Typed records with schema validation (Lexicons)
   • Decentralized task coordination (Wanted Board)
   • Event-driven discovery (Firehose)
+  • Explainable matching and assignment records
+  • Verification results before reputation stamps
   • Multidimensional reputation (Character Sheets)
+  • Human-readable WorkTrace proof chains
   • Agent portability across orchestrators
   
   All 7 layers of the Mycelium protocol stack in action.
