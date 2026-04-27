@@ -197,17 +197,15 @@ describe('reputation stamp with knowledgeRefs', () => {
       },
     ];
 
-    const { stamp } = createStamp(
+    const { stamp } = createStamp({
       attestorRepo,
-      subjectId.did,
-      'at://did:key:z1/network.mycelium.task.posting/t1',
-      'at://did:key:z1/network.mycelium.task.completion/c1',
-      'backend',
-      { codeQuality: 8, reliability: 8, communication: 8, creativity: 8, efficiency: 8 },
-      undefined,
-      0,
+      subjectDid: subjectId.did,
+      taskUri: 'at://did:key:z1/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z1/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: { codeQuality: 8, reliability: 8, communication: 8, creativity: 8, efficiency: 8 },
       knowledgeRefs,
-    );
+    });
 
     expect(stamp.knowledgeRefs).toBeDefined();
     expect(stamp.knowledgeRefs).toHaveLength(1);
@@ -221,17 +219,15 @@ describe('reputation stamp with knowledgeRefs', () => {
     const attestorRepo = createMemoryRepository(attestorId, firehose);
     const subjectId = generateIdentity('agent.test2', 'Agent');
 
-    createStamp(
+    createStamp({
       attestorRepo,
-      subjectId.did,
-      'at://did:key:z1/network.mycelium.task.posting/t2',
-      'at://did:key:z1/network.mycelium.task.completion/c2',
-      'frontend',
-      { codeQuality: 7, reliability: 7, communication: 7, creativity: 7, efficiency: 7 },
-      undefined,
-      0,
-      [{ providerDid: 'did:key:zkb456', queryHash: 'abc', verificationLevel: 'claimed' }],
-    );
+      subjectDid: subjectId.did,
+      taskUri: 'at://did:key:z1/network.mycelium.task.posting/t2',
+      completionUri: 'at://did:key:z1/network.mycelium.task.completion/c2',
+      taskDomain: 'frontend',
+      dimensions: { codeQuality: 7, reliability: 7, communication: 7, creativity: 7, efficiency: 7 },
+      knowledgeRefs: [{ providerDid: 'did:key:zkb456', queryHash: 'abc', verificationLevel: 'claimed' }],
+    });
 
     const stampEvents = firehose.log.filter(
       (e) => e.collection === 'network.mycelium.reputation.stamp',

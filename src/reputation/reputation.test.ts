@@ -95,14 +95,14 @@ describe('createStamp()', () => {
     const attestorRepo = createMemoryRepository(attestorId);
     const subjectDid = 'did:key:z6MkSubject';
 
-    const { stamp, uri } = createStamp(
+    const { stamp, uri } = createStamp({
       attestorRepo,
       subjectDid,
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend',
-      GOOD_DIMS,
-    );
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: GOOD_DIMS,
+    });
 
     expect(stamp.subjectDid).toBe(subjectDid);
     expect(stamp.overallScore).toBeCloseTo(computeOverallScore(GOOD_DIMS));
@@ -112,32 +112,30 @@ describe('createStamp()', () => {
 
   it('applies rework penalty to overallScore', () => {
     const attestorRepo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
-    const { stamp } = createStamp(
-      attestorRepo,
-      'did:key:z6MkSubject',
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend',
-      PERFECT_DIMS,
-      undefined,
-      10, // rework penalty
-    );
+    const { stamp } = createStamp({
+      attestorRepo: createMemoryRepository(generateIdentity('mayor.local', 'Mayor')),
+      subjectDid: 'did:key:z6MkSubject',
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: PERFECT_DIMS,
+      reworkPenalty: 10,
+    });
     expect(stamp.overallScore).toBeCloseTo(90); // 100 - 10
     expect(stamp.assessment).toBe('exceptional'); // 90 is still exceptional
   });
 
   it('score does not go below 0 with large penalty', () => {
     const attestorRepo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
-    const { stamp } = createStamp(
+    const { stamp } = createStamp({
       attestorRepo,
-      'did:key:z6MkSubject',
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend',
-      POOR_DIMS,
-      undefined,
-      200, // massive penalty
-    );
+      subjectDid: 'did:key:z6MkSubject',
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: POOR_DIMS,
+      reworkPenalty: 200,
+    });
     expect(stamp.overallScore).toBe(0);
   });
 });
@@ -304,36 +302,42 @@ describe('rankClaims()', () => {
 describe('createStamp() attestorType', () => {
   it('defaults to undefined when attestorType is not provided', () => {
     const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
-    const { stamp } = createStamp(
-      repo, 'did:key:z6MkSubject',
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend', GOOD_DIMS,
-    );
+    const { stamp } = createStamp({
+      attestorRepo: repo,
+      subjectDid: 'did:key:z6MkSubject',
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: GOOD_DIMS,
+    });
     expect(stamp.attestorType).toBeUndefined();
   });
 
   it('stores attestorType: requester when explicitly provided', () => {
     const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
-    const { stamp } = createStamp(
-      repo, 'did:key:z6MkSubject',
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend', GOOD_DIMS,
-      undefined, 0, undefined, undefined, 'requester',
-    );
+    const { stamp } = createStamp({
+      attestorRepo: repo,
+      subjectDid: 'did:key:z6MkSubject',
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: GOOD_DIMS,
+      attestorType: 'requester',
+    });
     expect(stamp.attestorType).toBe('requester');
   });
 
   it('stores attestorType: mayor when explicitly provided', () => {
     const repo = createMemoryRepository(generateIdentity('mayor.local', 'Mayor'));
-    const { stamp } = createStamp(
-      repo, 'did:key:z6MkSubject',
-      'at://did:key:z6Mk/network.mycelium.task.posting/t1',
-      'at://did:key:z6Mk/network.mycelium.task.completion/c1',
-      'backend', GOOD_DIMS,
-      undefined, 0, undefined, undefined, 'mayor',
-    );
+    const { stamp } = createStamp({
+      attestorRepo: repo,
+      subjectDid: 'did:key:z6MkSubject',
+      taskUri: 'at://did:key:z6Mk/network.mycelium.task.posting/t1',
+      completionUri: 'at://did:key:z6Mk/network.mycelium.task.completion/c1',
+      taskDomain: 'backend',
+      dimensions: GOOD_DIMS,
+      attestorType: 'mayor',
+    });
     expect(stamp.attestorType).toBe('mayor');
   });
 });

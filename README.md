@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 467 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · network participants dashboard
+> **Status:** MVP — 481 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
 
 ---
 
@@ -15,7 +15,8 @@ The MVP demonstrates the full lifecycle:
 ```
 Bootstrap agents → Declare capabilities → Post tasks to Wanted Board →
 Agents discover & claim tasks via Firehose → Execute (real or simulated) →
-Mayor quality-gates completions → Reputation stamps issued (or rejection + rework)
+Mayor recommends, assigns, verifies completions → Reputation stamps link to evidence →
+WorkTrace explains who did what, why it counted, and what changes next
 ```
 
 ---
@@ -171,11 +172,12 @@ curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collect
 |-------|-----------|-------------------|
 | L0 | Agent Identity | `did:key` (Ed25519) — unique, cryptographically verifiable, persisted |
 | L1 | Data Ownership | Per-agent in-memory stores (DuckDB-persisted) — agents own their records |
-| L2 | Schemas | Zod-validated Lexicon-like records (15 types) |
+| L2 | Schemas | Zod-validated Lexicon-like records (19 types) |
 | L3 | Federation | In-memory Firehose + AT Protocol PDS bridge (real XRPC) + Jetstream federation |
 | L3 | Coordination | Wanted Board — task state machine (open→claimed→assigned→in_progress→completed→accepted/rejected→open) |
 | L4 | Orchestration | Mayor — decomposes projects, ranks claims, quality-gates completions |
 | L5 | Governance | Reputation — signed stamps, multi-dimensional scores, trust levels |
+| L6 | Explanation | WorkTrace — derived proof chain for task lifecycle, evidence, and consequences |
 
 ### Intelligence Providers
 
@@ -198,12 +200,13 @@ src/
   storage/        DuckDB connection factory + async persistence layer
   firehose/       In-memory pub/sub event bus
   atproto/        AT Protocol bridge (PDS XRPC mirror + Jetstream federation consumer)
-  schemas/        Zod schemas for all 16 record types
+  audit/          WorkTrace builder that derives human-readable proof chains from firehose events
+  schemas/        Zod schemas for all 19 record types
   intelligence/   Provider/model bootstrap (GitHub Models + Ollama)
   knowledge/      Knowledge provider bootstrap, seed documents, query with graceful degradation
   tools/          Tool provider bootstrap, definition records, invocation with graceful degradation
   agents/         Engine (bootstrap + createAgentRunner) + 6-agent roster
-  orchestrator/   Mayor + Wanted Board (claim ranking, task lifecycle, quality gate)
+  orchestrator/   Mayor + Wanted Board (recommendation, assignment, verification, quality gate)
   reputation/     Stamp creation, aggregation, trust levels, rankClaims
   constants.ts    All magic numbers centralised
   demo/
@@ -220,13 +223,15 @@ scripts/
 
 **Agent Sovereignty** — Each agent has its own data store, persisted to DuckDB. The Mayor coordinates but never owns agent data. Agent identities (DIDs + keypairs) persist across runs.
 
-**Wanted Board** — Tasks posted as `task.posting` records in the Mayor's repo. Agents subscribe to the Firehose, evaluate tasks via `shouldClaim()` (domain + proficiency + tag matching), file `task.claim` records in their own repos. The Mayor ranks competing claims by capability fit, reputation, and load, then assigns the best candidate.
+**Wanted Board** — Tasks posted as `task.posting` records in the Mayor's repo. Agents subscribe to the Firehose, evaluate tasks via `shouldClaim()` (domain + proficiency + tag matching), file `task.claim` records in their own repos. The Mayor Bundle ranks competing claims by capability fit, reputation, and load, writes a `match.recommendation` record, then writes a `task.assignment` record for the selected worker. The matcher and coordinator roles are bundled in this demo, but their typed records make the boundary explicit.
 
-**Quality Gate** — The Mayor evaluates completions against quality thresholds (pass rate, coverage, summary depth). Poor-quality work is rejected: the task reopens, the agent earns a negative stamp, and another agent can claim it. After 3 attempts, the task is force-accepted.
+**Quality Gate** — The Mayor Bundle evaluates completions against quality thresholds (pass rate, coverage, summary depth), writes a `verification.result`, and then stamps accepted or rejected work. Poor-quality work is rejected: the task reopens, the agent earns a negative stamp linked to the verification evidence, and another agent can claim it. After 3 attempts, the task is force-accepted.
 
-**Reputation** — After task acceptance, the Mayor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps are typed by `attestorType` (`mayor`, `requester`, `peer`) and weighted during aggregation — Mayor stamps carry 40%, requester feedback 35%, peer review 20%. Stamps live in the attestor's repo, signed and attributable. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`).
+**Reputation** — After verification, an attestor issues a `reputation.stamp` (multi-dimensional: code quality, reliability, communication, creativity, efficiency). Stamps are typed by `attestorType` (`mayor`, `requester`, `peer`, `verifier`) and weighted during aggregation — Mayor stamps carry 40%, requester feedback 35%, peer review 20%. Stamps live in the attestor's repo, signed and attributable, and can carry `evidenceUris` pointing to verification records. Any observer can aggregate them into a trust level (`newcomer → established → trusted → expert`). A stamp is evidence, not a global score.
 
-**Network Participants** — The dashboard shows all entity types in a unified "Network Participants" view: 👤 human task requesters (with their own DID and AT Protocol identity), 🏛️ the Mayor orchestrator, 🤖 AI agents, 🔧 tool providers, and 📚 knowledge providers. Customer `task.posting` and `task.review` events are labeled by handle in the firehose.
+**Network Participants** — The dashboard shows all entity types in a unified "Network Participants" view: 👤 human task requesters (with their own DID and AT Protocol identity), 🏛️ the Mayor Bundle (matcher, coordinator, verifier, and attestor roles bundled in this demo), 🤖 worker agents, 🔧 tool providers, and 📚 knowledge providers. Customer `task.posting` and `task.review` events are labeled by handle in the firehose.
+
+**Proof Chain / WorkTrace** — Open a completed task in the dashboard to see a role-by-role proof chain: requester posted work, agents claimed it, matcher recommended a worker, coordinator assigned it, worker completed it, verifier checked it, and attestor issued a stamp. `GET /api/tasks/:id/trace` returns the same derived trace as JSON, including missing evidence for pending tasks and consequences for future routing.
 
 **Intelligence Attribution** — Every task completion records `intelligenceUsed: { modelDid, providerDid }`. Reputation stamps carry `intelligenceDid`. The full provenance chain (agent + model + provider) is verifiable.
 
@@ -252,6 +257,9 @@ npm run query "SELECT seq, collection, rkey, operation FROM firehose_events ORDE
 # Who earned the most stamps?
 npm run query "SELECT did, COUNT(*) AS stamps FROM firehose_events WHERE collection = 'network.mycelium.reputation.stamp' GROUP BY did ORDER BY 2 DESC"
 
+# What proof-chain records were produced?
+npm run query "SELECT collection, COUNT(*) FROM firehose_events WHERE collection IN ('network.mycelium.match.recommendation', 'network.mycelium.task.assignment', 'network.mycelium.verification.result') GROUP BY 1 ORDER BY 1"
+
 # Which tasks got rejected?
 npm run query "SELECT rkey, content FROM records WHERE collection = 'network.mycelium.task.posting'"
 ```
@@ -268,18 +276,24 @@ duckdb data/mycelium.duckdb
 npm run dashboard   # → http://localhost:3000
 ```
 
-The dashboard shows live SSE events, agent profiles, task timelines, and reputation stamps.
+The dashboard shows live SSE events, network participants, agent profiles, task timelines, proof chains, and evidence-linked reputation stamps.
+
+After a task is posted, inspect its proof chain:
+
+```bash
+curl "http://localhost:3000/api/tasks/task-001/trace"
+```
 
 ---
 
 ## Testing
 
 ```bash
-npm test            # run all 467 tests once
+npm test            # run all 481 tests once
 npm run test:watch  # watch mode
 ```
 
-Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, agents, intelligence, knowledge, tools, storage, atproto.
+Test coverage: schemas, identity, firehose, repository, wanted-board, orchestrator, reputation, audit/WorkTrace, agents, intelligence, knowledge, tools, storage, atproto.
 
 ---
 
@@ -289,7 +303,7 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 - [`README.md`](./docs/PRD/README.md) — Executive summary and MVP scope
 - [`ARCHITECTURE.md`](./docs/PRD/ARCHITECTURE.md) — Component design and data flow
-- [`SCHEMAS.md`](./docs/PRD/SCHEMAS.md) — All 16 Lexicon record type definitions
+- [`SCHEMAS.md`](./docs/PRD/SCHEMAS.md) — All 19 Lexicon record type definitions
 - [`INTELLIGENCE.md`](./docs/PRD/INTELLIGENCE.md) — Intelligence provider strategy
 - [`E2E-SCENARIO.md`](./docs/PRD/E2E-SCENARIO.md) — Detailed demo walkthrough
 - [`IMPLEMENTATION-PLAN.md`](./docs/PRD/IMPLEMENTATION-PLAN.md) — Phased build plan
@@ -299,5 +313,5 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 ## What's Next
 
 - **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route exists; needs a registered domain)
-- **Federation** — Multi-Mayor federation with real cross-node task discovery is implemented on the [`feat/federation`](../../tree/feat/federation) branch (Phases 13–15 complete, 359 tests)
+- **Federation v2** — Multi-Mayor federation with real cross-node task discovery is proven on the older [`feat/federation`](../../tree/feat/federation) branch; the next product step is forward-porting that topology onto the current proof-chain foundation.
 - **Production hardening** — Rate limiting, structured logging, health check endpoints, graceful shutdown

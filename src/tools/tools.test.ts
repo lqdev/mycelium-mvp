@@ -195,18 +195,15 @@ describe('reputation stamp with toolRefs', () => {
       },
     ];
 
-    const { stamp } = createStamp(
+    const { stamp } = createStamp({
       attestorRepo,
-      subjectId.did,
-      'at://did:key:z1/network.mycelium.task.posting/t3',
-      'at://did:key:z1/network.mycelium.task.completion/c3',
-      'backend',
-      { codeQuality: 9, reliability: 9, communication: 9, creativity: 9, efficiency: 9 },
-      undefined,
-      0,
-      undefined,
+      subjectDid: subjectId.did,
+      taskUri: 'at://did:key:z1/network.mycelium.task.posting/t3',
+      completionUri: 'at://did:key:z1/network.mycelium.task.completion/c3',
+      taskDomain: 'backend',
+      dimensions: { codeQuality: 9, reliability: 9, communication: 9, creativity: 9, efficiency: 9 },
       toolRefs,
-    );
+    });
 
     expect(stamp.toolRefs).toBeDefined();
     expect(stamp.toolRefs).toHaveLength(1);
@@ -227,18 +224,16 @@ describe('reputation stamp with toolRefs', () => {
       { toolDid: 'did:key:ztool', toolUri: 'at://did:key:ztool/network.mycelium.tool.definition/t1', success: true },
     ];
 
-    const { stamp } = createStamp(
+    const { stamp } = createStamp({
       attestorRepo,
-      subjectId.did,
-      'at://did:key:z1/network.mycelium.task.posting/t4',
-      'at://did:key:z1/network.mycelium.task.completion/c4',
-      'security',
-      { codeQuality: 7, reliability: 8, communication: 8, creativity: 7, efficiency: 9 },
-      undefined,
-      0,
+      subjectDid: subjectId.did,
+      taskUri: 'at://did:key:z1/network.mycelium.task.posting/t4',
+      completionUri: 'at://did:key:z1/network.mycelium.task.completion/c4',
+      taskDomain: 'security',
+      dimensions: { codeQuality: 7, reliability: 8, communication: 8, creativity: 7, efficiency: 9 },
       knowledgeRefs,
       toolRefs,
-    );
+    });
 
     expect(stamp.knowledgeRefs).toHaveLength(1);
     expect(stamp.toolRefs).toHaveLength(1);

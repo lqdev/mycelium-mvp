@@ -6,7 +6,7 @@
 
 ## Namespace Convention
 
-All Mycelium records use the `network.mycelium.*` namespace (reverse-DNS), following AT Protocol Lexicon conventions. The MVP defines **16 record types** organized across 6 domains: `agent`, `intelligence`, `task`, `reputation`, `knowledge`, and `tool`.
+All Mycelium records use the `network.mycelium.*` namespace (reverse-DNS), following AT Protocol Lexicon conventions. The MVP defines **19 record types** organized across 8 domains: `agent`, `intelligence`, `task`, `reputation`, `knowledge`, `tool`, `match`, and `verification`.
 
 ```
 network.mycelium.{domain}.{type}
@@ -524,12 +524,13 @@ interface ReputationStamp {
     toolUri: string;                    // AT URI of the tool.definition record
     success: boolean;
   }>;
+  evidenceUris?: string[];              // AT URIs of verification/evidence records backing this stamp
   dimensions: {
-    codeQuality: number;                // 0-100
-    reliability: number;                // 0-100
-    communication: number;              // 0-100
-    creativity: number;                 // 0-100
-    efficiency: number;                 // 0-100
+    codeQuality: number;                // 0-10
+    reliability: number;                // 0-10
+    communication: number;              // 0-10
+    creativity: number;                 // 0-10
+    efficiency: number;                 // 0-10
   };
   overallScore: number;                 // 0-100, weighted average
   assessment: "exceptional" | "strong" | "satisfactory" | "needs_improvement" | "unsatisfactory";
@@ -548,12 +549,15 @@ interface ReputationStamp {
   "completionUri": "at://did:key:z6Mkha.../network.mycelium.task.completion/comp-001",
   "taskDomain": "frontend",
   "intelligenceDid": "did:key:z6MkCS4model1...",
+  "evidenceUris": [
+    "at://did:key:z6Mkorch.../network.mycelium.verification.result/verify-001"
+  ],
   "dimensions": {
-    "codeQuality": 92,
-    "reliability": 95,
-    "communication": 88,
-    "creativity": 85,
-    "efficiency": 90
+    "codeQuality": 9.2,
+    "reliability": 9.5,
+    "communication": 8.8,
+    "creativity": 8.5,
+    "efficiency": 9.0
   },
   "overallScore": 91,
   "assessment": "exceptional",
@@ -626,6 +630,11 @@ Knowledge + tool provenance chain (Phase 16):
   • tool.invocation    → tool.definition   (via toolUri), task.posting (via taskUri)
   • reputation.stamp   → knowledge.query   (via knowledgeRefs[].queryHash)
   • reputation.stamp   → tool.definition   (via toolRefs[].toolUri)
+  • match.recommendation → task.claim       (via rankings[].claimUri)
+  • task.assignment      → match.recommendation (via matchRecommendationUri)
+  • task.assignment      → task.claim       (via claimUri)
+  • verification.result  → task.completion  (via completionUri)
+  • reputation.stamp     → verification.result (via evidenceUris[])
 ```
 
 ---
@@ -642,6 +651,8 @@ Knowledge + tool provenance chain (Phase 16):
 8. **Intelligence is attributable**: Task completions reference which intelligence did the work.
 9. **Knowledge providers own document records**: `knowledge.document` records live in the provider's repo; PDS MST assigns CIDs automatically — enabling content-addressable verification.
 10. **Tool providers own definition records**: `tool.definition` records live in the provider's repo; invocations reference the definition's AT URI for full auditability.
+11. **Proof-chain records explain coordination**: `match.recommendation`, `task.assignment`, and `verification.result` records make ranking, assignment, and verification inspectable without splitting the demo runtime into separate services.
+12. **Stamps link to evidence**: `reputation.stamp.evidenceUris[]` points at verification or evidence records. A stamp is evidence, not a global score.
 
 ---
 
@@ -820,4 +831,81 @@ interface TaskReview {
 ```
 
 **Attestor weight:** When the Mayor sees a `task.review` record from the verified original requester DID, it issues a `reputation.stamp` with `attestorType: 'requester'` — weighted at **35%** in `aggregateReputation()`. This gives task requesters meaningful, first-party influence over agent reputation without requiring them to be AT Protocol power users.
+
+---
+
+## 17. Match Recommendation
+
+**NSID:** `network.mycelium.match.recommendation`
+**Purpose:** Audit record for a matcher decision. It captures ranked candidates, score reasons, and the selected claim before assignment.
+**Stored in:** Matcher/coordinator repository. In the MVP, this is the Mayor Bundle repository.
+**rkey:** Generated UUID
+
+```typescript
+interface MatchRecommendation {
+  $type: "network.mycelium.match.recommendation";
+  taskUri: string;                      // AT URI of the task.posting record
+  matcherDid: string;                   // DID of the matcher authoring the decision
+  policy: "trust-weighted";
+  rankings: Array<{
+    rank: number;                       // 1 = best
+    candidateDid: string;               // DID of candidate worker
+    claimUri: string;                   // AT URI of candidate task.claim
+    score: number;                      // Ranking score under local policy
+    reasons: string[];                  // Human-readable reasons
+  }>;
+  selectedDid: string;                  // DID of winning worker
+  selectedClaimUri: string;             // AT URI of winning task.claim
+  createdAt: string;
+}
+```
+
+**Demo note:** The matcher is bundled into the Mayor process today. The record is the important protocol boundary: another service could write the same decision record later.
+
+---
+
+## 18. Task Assignment
+
+**NSID:** `network.mycelium.task.assignment`
+**Purpose:** Signed coordinator commitment that links a task, the winning claim, and the match recommendation that justified the assignment.
+**Stored in:** Coordinator repository. In the MVP, this is the Mayor Bundle repository.
+**rkey:** Generated UUID
+
+```typescript
+interface TaskAssignment {
+  $type: "network.mycelium.task.assignment";
+  taskUri: string;                      // AT URI of the task.posting record
+  claimUri: string;                     // AT URI of the selected task.claim
+  coordinatorDid: string;               // DID of the assigning coordinator
+  assigneeDid: string;                  // DID of selected worker
+  matchRecommendationUri: string;       // AT URI of the match.recommendation record
+  assignmentPolicy: "top-ranked";
+  createdAt: string;
+}
+```
+
+---
+
+## 19. Verification Result
+
+**NSID:** `network.mycelium.verification.result`
+**Purpose:** Evidence-backed verification outcome written after a worker submits a completion and before any reputation stamp is issued.
+**Stored in:** Verifier repository. In the MVP, this is the Mayor Bundle repository.
+**rkey:** Generated UUID
+
+```typescript
+interface VerificationResult {
+  $type: "network.mycelium.verification.result";
+  taskUri: string;                      // AT URI of the task.posting record
+  completionUri: string;                // AT URI of the task.completion record
+  verifierDid: string;                  // DID of the verifier
+  verificationType: "simulation-metrics";
+  status: "passed" | "failed" | "inconclusive";
+  summary: string;                      // Human-readable verdict
+  evidence: string[];                   // Human-readable evidence points
+  createdAt: string;
+}
+```
+
+**Demo note:** `simulation-metrics` is intentionally conservative. If the local simulation cannot support a strong pass/fail claim, the verifier can write `inconclusive` and the WorkTrace will say so.
 
