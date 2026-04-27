@@ -18,6 +18,9 @@ const EXPECTED_NSIDS = [
   'network.mycelium.tool.definition',
   'network.mycelium.tool.invocation',
   'network.mycelium.task.review',
+  'network.mycelium.match.recommendation',
+  'network.mycelium.task.assignment',
+  'network.mycelium.verification.result',
 ];
 
 describe('Lexicon registry', () => {
@@ -136,6 +139,9 @@ describe('Lexicon key conventions', () => {
       'network.mycelium.task.claim',
       'network.mycelium.task.completion',
       'network.mycelium.reputation.stamp',
+      'network.mycelium.match.recommendation',
+      'network.mycelium.task.assignment',
+      'network.mycelium.verification.result',
     ];
     for (const nsid of nonSingletons) {
       const main = getLexicon(nsid)!.defs.main as LexRecord;
@@ -160,6 +166,13 @@ describe('Lexicon content spot-checks', () => {
     expect(main.record.properties.overallScore.type).toBe('integer');
     expect(main.record.properties.overallScore.minimum).toBe(1);
     expect(main.record.properties.overallScore.maximum).toBe(10);
+  });
+
+  it('reputation.stamp evidenceUris is an at-uri array', () => {
+    const lex = getLexicon('network.mycelium.reputation.stamp')!;
+    const main = lex.defs.main as LexRecord;
+    expect(main.record.properties.evidenceUris.type).toBe('array');
+    expect(main.record.properties.evidenceUris.items?.format).toBe('at-uri');
   });
 
   it('task.posting has correct status knownValues', () => {
@@ -192,5 +205,27 @@ describe('Lexicon content spot-checks', () => {
     const main = lex.defs.main as LexRecord;
     expect(main.record.properties.createdAt.format).toBe('datetime');
     expect(main.record.properties.updatedAt.format).toBe('datetime');
+  });
+
+  it('proof-chain reference fields are at-uri formatted', () => {
+    const recommendation = getLexicon('network.mycelium.match.recommendation')!;
+    const recommendationMain = recommendation.defs.main as LexRecord;
+    const rankEntry = recommendation.defs.rankEntry;
+    expect(recommendationMain.record.properties.taskUri.format).toBe('at-uri');
+    expect(recommendationMain.record.properties.selectedClaimUri.format).toBe('at-uri');
+    expect(rankEntry.type).toBe('object');
+    if (rankEntry.type !== 'object') throw new Error('rankEntry must be an object');
+    expect(rankEntry.properties.claimUri.format).toBe('at-uri');
+
+    const assignment = getLexicon('network.mycelium.task.assignment')!;
+    const assignmentMain = assignment.defs.main as LexRecord;
+    expect(assignmentMain.record.properties.taskUri.format).toBe('at-uri');
+    expect(assignmentMain.record.properties.claimUri.format).toBe('at-uri');
+    expect(assignmentMain.record.properties.matchRecommendationUri.format).toBe('at-uri');
+
+    const verification = getLexicon('network.mycelium.verification.result')!;
+    const verificationMain = verification.defs.main as LexRecord;
+    expect(verificationMain.record.properties.taskUri.format).toBe('at-uri');
+    expect(verificationMain.record.properties.completionUri.format).toBe('at-uri');
   });
 });

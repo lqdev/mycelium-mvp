@@ -8,8 +8,11 @@ import {
   TaskPostingSchema,
   TaskClaimSchema,
   TaskCompletionSchema,
+  MatchRecommendationSchema,
   ReputationStampSchema,
+  TaskAssignmentSchema,
   TaskReviewSchema,
+  VerificationResultSchema,
   SCHEMA_REGISTRY,
   validateRecord,
 } from './index.js';
@@ -20,6 +23,8 @@ const DID_A = 'did:key:z6MkagentAAAA';
 const DID_B = 'did:key:z6MkagentBBBB';
 const TASK_URI = 'at://did:key:z6MkagentAAAA/network.mycelium.task.posting/abc';
 const CLAIM_URI = 'at://did:key:z6MkagentBBBB/network.mycelium.task.claim/xyz';
+const RECOMMENDATION_URI = 'at://did:key:z6MkagentAAAA/network.mycelium.match.recommendation/rec-1';
+const COMPLETION_URI = 'at://did:key:z6MkagentBBBB/network.mycelium.task.completion/comp-1';
 
 // ─── AgentProfile ─────────────────────────────────────────────────────────────
 
@@ -308,6 +313,10 @@ describe('ReputationStampSchema', () => {
   it('rejects invalid assessment value', () => {
     expect(() => ReputationStampSchema.parse({ ...valid, assessment: 'good' })).toThrow();
   });
+
+  it('rejects malformed evidenceUris', () => {
+    expect(() => ReputationStampSchema.parse({ ...valid, evidenceUris: ['not-an-at-uri'] })).toThrow();
+  });
 });
 
 // ─── SCHEMA_REGISTRY ──────────────────────────────────────────────────────────
@@ -332,6 +341,9 @@ describe('SCHEMA_REGISTRY', () => {
       'network.mycelium.tool.definition',
       'network.mycelium.tool.invocation',
       'network.mycelium.task.review',
+      'network.mycelium.match.recommendation',
+      'network.mycelium.task.assignment',
+      'network.mycelium.verification.result',
     ];
     for (const nsid of expectedNsids) {
       expect(SCHEMA_REGISTRY.has(nsid), `Missing schema: ${nsid}`).toBe(true);
@@ -370,8 +382,6 @@ describe('validateRecord()', () => {
 });
 
 // ─── TaskReviewSchema ─────────────────────────────────────────────────────────
-
-const COMPLETION_URI = 'at://did:key:z6MkagentAAAA/network.mycelium.task.completion/xyz';
 
 describe('TaskReviewSchema', () => {
   const validReview = {
@@ -414,6 +424,73 @@ describe('TaskReviewSchema', () => {
 
   it('rejects missing required fields', () => {
     expect(() => TaskReviewSchema.parse({ $type: 'network.mycelium.task.review' })).toThrow();
+  });
+});
+
+// ─── Proof-chain schemas ──────────────────────────────────────────────────────
+
+describe('Proof-chain schemas', () => {
+  const validRecommendation = {
+    $type: 'network.mycelium.match.recommendation' as const,
+    taskUri: TASK_URI,
+    matcherDid: DID_A,
+    policy: 'trust-weighted' as const,
+    rankings: [{
+      rank: 1,
+      candidateDid: DID_B,
+      claimUri: CLAIM_URI,
+      score: 91,
+      reasons: ['best fit'],
+    }],
+    selectedDid: DID_B,
+    selectedClaimUri: CLAIM_URI,
+    createdAt: NOW,
+  };
+
+  const validAssignment = {
+    $type: 'network.mycelium.task.assignment' as const,
+    taskUri: TASK_URI,
+    claimUri: CLAIM_URI,
+    coordinatorDid: DID_A,
+    assigneeDid: DID_B,
+    matchRecommendationUri: RECOMMENDATION_URI,
+    assignmentPolicy: 'top-ranked' as const,
+    createdAt: NOW,
+  };
+
+  const validVerification = {
+    $type: 'network.mycelium.verification.result' as const,
+    taskUri: TASK_URI,
+    completionUri: COMPLETION_URI,
+    verifierDid: DID_A,
+    verificationType: 'simulation-metrics' as const,
+    status: 'passed' as const,
+    summary: 'Verified',
+    evidence: ['tests passed'],
+    createdAt: NOW,
+  };
+
+  it('accepts valid proof-chain link records', () => {
+    expect(() => MatchRecommendationSchema.parse(validRecommendation)).not.toThrow();
+    expect(() => TaskAssignmentSchema.parse(validAssignment)).not.toThrow();
+    expect(() => VerificationResultSchema.parse(validVerification)).not.toThrow();
+  });
+
+  it('rejects malformed recommendation claim URIs', () => {
+    expect(() => MatchRecommendationSchema.parse({
+      ...validRecommendation,
+      rankings: [{ ...validRecommendation.rankings[0], claimUri: 'not-an-at-uri' }],
+    })).toThrow();
+    expect(() => MatchRecommendationSchema.parse({ ...validRecommendation, selectedClaimUri: 'not-an-at-uri' })).toThrow();
+  });
+
+  it('rejects malformed assignment link URIs', () => {
+    expect(() => TaskAssignmentSchema.parse({ ...validAssignment, claimUri: 'not-an-at-uri' })).toThrow();
+    expect(() => TaskAssignmentSchema.parse({ ...validAssignment, matchRecommendationUri: 'not-an-at-uri' })).toThrow();
+  });
+
+  it('rejects malformed verification completion URIs', () => {
+    expect(() => VerificationResultSchema.parse({ ...validVerification, completionUri: 'not-an-at-uri' })).toThrow();
   });
 });
 

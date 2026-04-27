@@ -537,6 +537,16 @@ const reputationStamp: LexiconDoc = {
             description: 'Categorical assessment label.',
           },
           comment: { type: 'string', description: 'Optional free-text feedback from the Mayor.' },
+          attestorType: {
+            type: 'string',
+            knownValues: ['mayor', 'requester', 'peer', 'verifier'],
+            description: 'Role of the attestor issuing this stamp.',
+          },
+          evidenceUris: {
+            type: 'array',
+            items: { type: 'string', format: 'at-uri' },
+            description: 'AT URIs of evidence records, such as verification.result, that justify this stamp.',
+          },
           createdAt: { type: 'string', format: 'datetime' },
         },
       },
@@ -764,7 +774,7 @@ const matchRecommendation: LexiconDoc = {
             description: 'Ordered list of candidates from best (rank 1) to worst.',
           },
           selectedDid: { type: 'string', format: 'did', description: 'DID of the selected candidate.' },
-          selectedClaimUri: { type: 'string', description: 'AT URI of the winning claim.' },
+          selectedClaimUri: { type: 'string', format: 'at-uri', description: 'AT URI of the winning claim.' },
           createdAt: { type: 'string', format: 'datetime' },
         },
       },
@@ -775,7 +785,7 @@ const matchRecommendation: LexiconDoc = {
       properties: {
         rank: { type: 'integer', minimum: 1, description: 'Position (1 = best).' },
         candidateDid: { type: 'string', format: 'did', description: 'DID of this candidate.' },
-        claimUri: { type: 'string', description: 'AT URI of this candidate\'s claim.' },
+        claimUri: { type: 'string', format: 'at-uri', description: 'AT URI of this candidate\'s claim.' },
         score: { type: 'number', description: 'Composite ranking score.' },
         reasons: { type: 'array', items: { type: 'string' }, description: 'Human-readable reasons for this score.' },
       },
@@ -796,10 +806,10 @@ const taskAssignment: LexiconDoc = {
         required: ['taskUri', 'claimUri', 'coordinatorDid', 'assigneeDid', 'matchRecommendationUri', 'assignmentPolicy', 'createdAt'],
         properties: {
           taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the assigned task.posting.' },
-          claimUri: { type: 'string', description: 'AT URI of the accepted task.claim.' },
+          claimUri: { type: 'string', format: 'at-uri', description: 'AT URI of the accepted task.claim.' },
           coordinatorDid: { type: 'string', format: 'did', description: 'DID of the coordinator (may be bundled inside the Mayor).' },
           assigneeDid: { type: 'string', format: 'did', description: 'DID of the agent being assigned.' },
-          matchRecommendationUri: { type: 'string', description: 'AT URI of the match.recommendation record that justified this assignment.' },
+          matchRecommendationUri: { type: 'string', format: 'at-uri', description: 'AT URI of the match.recommendation record that justified this assignment.' },
           assignmentPolicy: { type: 'string', knownValues: ['top-ranked'], description: 'Policy used to select from the recommendation.' },
           createdAt: { type: 'string', format: 'datetime' },
         },
@@ -821,7 +831,7 @@ const verificationResult: LexiconDoc = {
         required: ['taskUri', 'completionUri', 'verifierDid', 'verificationType', 'status', 'summary', 'evidence', 'createdAt'],
         properties: {
           taskUri: { type: 'string', format: 'at-uri', description: 'AT URI of the verified task.posting.' },
-          completionUri: { type: 'string', description: 'AT URI of the verified task.completion.' },
+          completionUri: { type: 'string', format: 'at-uri', description: 'AT URI of the verified task.completion.' },
           verifierDid: { type: 'string', format: 'did', description: 'DID of the verifier.' },
           verificationType: { type: 'string', knownValues: ['simulation-metrics'], description: 'What kind of verification was applied.' },
           status: {

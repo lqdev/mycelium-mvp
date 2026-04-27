@@ -264,7 +264,7 @@ export const ReputationStampSchema = z.object({
     success: z.boolean(),
   })).optional(),
   attestorType: z.enum(['mayor', 'requester', 'peer', 'verifier']).optional(),
-  evidenceUris: z.array(z.string()).optional(),
+  evidenceUris: z.array(atUri).optional(),
   dimensions: z.object({
     codeQuality: reputationScore,
     reliability: reputationScore,
@@ -391,13 +391,13 @@ export const MatchRecommendationSchema = z.object({
     z.object({
       rank: z.number().int().min(1),
       candidateDid: did,
-      claimUri: z.string().min(1),
+      claimUri: atUri,
       score: z.number(),
       reasons: z.array(z.string()),
     }),
   ),
   selectedDid: did,
-  selectedClaimUri: z.string().min(1),
+  selectedClaimUri: atUri,
   createdAt: isoDateTime,
 });
 
@@ -406,10 +406,10 @@ export const MatchRecommendationSchema = z.object({
 export const TaskAssignmentSchema = z.object({
   $type: z.literal('network.mycelium.task.assignment'),
   taskUri: atUri,
-  claimUri: z.string().min(1),
+  claimUri: atUri,
   coordinatorDid: did,
   assigneeDid: did,
-  matchRecommendationUri: z.string().min(1),
+  matchRecommendationUri: atUri,
   assignmentPolicy: z.literal('top-ranked'),
   createdAt: isoDateTime,
 });
@@ -419,7 +419,7 @@ export const TaskAssignmentSchema = z.object({
 export const VerificationResultSchema = z.object({
   $type: z.literal('network.mycelium.verification.result'),
   taskUri: atUri,
-  completionUri: z.string().min(1),
+  completionUri: atUri,
   verifierDid: did,
   verificationType: z.literal('simulation-metrics'),
   status: z.enum(['passed', 'failed', 'inconclusive']),

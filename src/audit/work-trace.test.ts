@@ -10,7 +10,11 @@ import type { Firehose, MatchRecommendation, ReputationStamp, TaskAssignment, Ta
 const MAYOR_DID = 'did:key:z6MkMayor';
 const AGENT_DID = 'did:key:z6MkAgent';
 const CUSTOMER_DID = 'did:key:z6MkCustomer';
+const PEER_DID = 'did:key:z6MkPeer';
+const VERIFIER_DID = 'did:key:z6MkVerifier';
 const TASK_URI = `at://${MAYOR_DID}/network.mycelium.task.posting/task-001`;
+const CLAIM_URI = `at://${AGENT_DID}/network.mycelium.task.claim/c1`;
+const COMPLETION_URI = `at://${AGENT_DID}/network.mycelium.task.completion/c1`;
 const TASK_RKEY = 'task-001';
 const TASK_ID = 'task-001';
 const TASK_TITLE = 'Build Dashboard UI';
@@ -20,11 +24,14 @@ function makePosting(status: TaskPosting['status']): TaskPosting {
     $type: 'network.mycelium.task.posting',
     title: TASK_TITLE,
     description: 'Build a dashboard',
-    requiredCapabilities: [{ domain: 'frontend', tags: ['react'], proficiencyLevel: 'intermediate' }],
+    requiredCapabilities: [{ domain: 'frontend', tags: ['react'], minProficiency: 'intermediate' }],
     complexity: 'medium',
     priority: 'high',
+    context: { projectName: 'Mycelium', projectDescription: 'Dashboard demo' },
+    deliverables: ['Dashboard component'],
     status,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -32,11 +39,13 @@ function makeClaim(): TaskClaim {
   return {
     $type: 'network.mycelium.task.claim',
     taskUri: TASK_URI,
+    taskTitle: TASK_TITLE,
     claimerDid: AGENT_DID,
-    matchingCapabilities: [{ domain: 'frontend', tags: ['react'], proficiencyLevel: 'intermediate' }],
-    proposal: { approach: 'standard', confidenceLevel: 'high' },
+    matchingCapabilities: ['frontend', 'react'],
+    proposal: { approach: 'standard', estimatedDuration: '1d', confidenceLevel: 'high' },
     status: 'pending',
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -44,8 +53,9 @@ function makeCompletion(): TaskCompletion {
   return {
     $type: 'network.mycelium.task.completion',
     taskUri: TASK_URI,
+    claimUri: CLAIM_URI,
     completerDid: AGENT_DID,
-    deliverables: [{ type: 'code', description: 'Frontend component', uri: 'at://test/a/b' }],
+    artifacts: [{ name: 'Dashboard.tsx', type: 'code', contentHash: 'sha256-dashboard', size: 1024, description: 'Frontend component' }],
     metrics: { executionTime: '1m', testsPassed: 5, testsTotal: 5, coveragePercent: 90 },
     summary: 'Dashboard built with all required components',
     createdAt: new Date().toISOString(),
@@ -56,7 +66,7 @@ function makeVerificationResult(status: VerificationResult['status']): Verificat
   return {
     $type: 'network.mycelium.verification.result',
     taskUri: TASK_URI,
-    completionUri: `at://${AGENT_DID}/network.mycelium.task.completion/c1`,
+    completionUri: COMPLETION_URI,
     verifierDid: MAYOR_DID,
     verificationType: 'simulation-metrics',
     status,
@@ -66,21 +76,29 @@ function makeVerificationResult(status: VerificationResult['status']): Verificat
   };
 }
 
-function makeStamp(assessment: ReputationStamp['assessment'], attestorType: 'mayor' | 'requester'): ReputationStamp {
-  return {
+function makeStamp(assessment: ReputationStamp['assessment'], attestorType?: ReputationStamp['attestorType']): ReputationStamp {
+  const attestorDid = attestorType === 'requester'
+    ? CUSTOMER_DID
+    : attestorType === 'peer'
+      ? PEER_DID
+      : attestorType === 'verifier'
+        ? VERIFIER_DID
+        : MAYOR_DID;
+  const stamp: ReputationStamp = {
     $type: 'network.mycelium.reputation.stamp',
     subjectDid: AGENT_DID,
-    attestorDid: attestorType === 'mayor' ? MAYOR_DID : CUSTOMER_DID,
+    attestorDid,
     taskUri: TASK_URI,
-    completionUri: `at://${AGENT_DID}/network.mycelium.task.completion/c1`,
+    completionUri: COMPLETION_URI,
     taskDomain: 'frontend',
     dimensions: { codeQuality: 8, reliability: 8, communication: 8, creativity: 8, efficiency: 8 },
     overallScore: 80,
     assessment,
     comment: 'Solid work',
-    attestorType,
     createdAt: new Date().toISOString(),
   };
+  if (attestorType) stamp.attestorType = attestorType;
+  return stamp;
 }
 
 function makeMatchRecommendation(): MatchRecommendation {
@@ -92,12 +110,12 @@ function makeMatchRecommendation(): MatchRecommendation {
     rankings: [{
       rank: 1,
       candidateDid: AGENT_DID,
-      claimUri: `at://${AGENT_DID}/network.mycelium.task.claim/c1`,
+      claimUri: CLAIM_URI,
       score: 75.5,
       reasons: ['reputation score 80.0 (3 tasks)', 'confidence: high'],
     }],
     selectedDid: AGENT_DID,
-    selectedClaimUri: `at://${AGENT_DID}/network.mycelium.task.claim/c1`,
+    selectedClaimUri: CLAIM_URI,
     createdAt: new Date().toISOString(),
   };
 }
@@ -106,7 +124,7 @@ function makeTaskAssignment(): TaskAssignment {
   return {
     $type: 'network.mycelium.task.assignment',
     taskUri: TASK_URI,
-    claimUri: `at://${AGENT_DID}/network.mycelium.task.claim/c1`,
+    claimUri: CLAIM_URI,
     coordinatorDid: MAYOR_DID,
     assigneeDid: AGENT_DID,
     matchRecommendationUri: `at://${MAYOR_DID}/network.mycelium.match.recommendation/r1`,
@@ -253,6 +271,40 @@ describe('buildWorkTrace()', () => {
     expect(stampStep).toBeDefined();
     expect(stampStep?.role).toBe('attestor');
     expect(stampStep?.summary).toContain('strong');
+  });
+
+  it('labels peer and verifier reputation stamps by attestor type', () => {
+    const fh = createFirehose();
+    publishPosting(fh, 'accepted');
+    publish(fh, {
+      seq: seq(fh), type: 'commit', operation: 'create',
+      did: PEER_DID, collection: 'network.mycelium.reputation.stamp', rkey: 's-peer',
+      record: makeStamp('satisfactory', 'peer'), timestamp: new Date().toISOString(),
+    });
+    publish(fh, {
+      seq: seq(fh), type: 'commit', operation: 'create',
+      did: VERIFIER_DID, collection: 'network.mycelium.reputation.stamp', rkey: 's-verifier',
+      record: makeStamp('strong', 'verifier'), timestamp: new Date().toISOString(),
+    });
+    const trace = buildWorkTrace(fh, TASK_URI, TASK_ID, TASK_TITLE, MAYOR_DID);
+    const summaries = trace.steps
+      .filter((s) => s.eventType === 'reputation.stamp')
+      .map((s) => s.summary);
+    expect(summaries.some((s) => s.startsWith('Peer issued'))).toBe(true);
+    expect(summaries.some((s) => s.startsWith('Verifier issued'))).toBe(true);
+  });
+
+  it('labels stamps without attestorType as Mayor for backward compatibility', () => {
+    const fh = createFirehose();
+    publishPosting(fh, 'accepted');
+    publish(fh, {
+      seq: seq(fh), type: 'commit', operation: 'create',
+      did: MAYOR_DID, collection: 'network.mycelium.reputation.stamp', rkey: 's-legacy',
+      record: makeStamp('strong'), timestamp: new Date().toISOString(),
+    });
+    const trace = buildWorkTrace(fh, TASK_URI, TASK_ID, TASK_TITLE, MAYOR_DID);
+    const stampStep = trace.steps.find((s) => s.eventType === 'reputation.stamp');
+    expect(stampStep?.summary).toContain('Mayor issued');
   });
 
   it('full accepted task has all 7 step types', () => {

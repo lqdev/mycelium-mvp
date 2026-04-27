@@ -1,5 +1,6 @@
 // Mayor orchestrator: monitors firehose, assigns tasks, reviews completions, issues stamps.
 
+import { randomUUID } from 'node:crypto';
 import type {
   AgentCapability,
   AgentProfile,
@@ -25,6 +26,10 @@ import { postTask, assignTask, reviewCompletion, reopenTask, transitionTask, get
 import { createStamp, aggregateReputation, rankClaims } from '../reputation/index.js';
 import { getStampsForAgent } from '../reputation/index.js';
 import type { ClaimCandidate } from '../reputation/index.js';
+
+function makeProofChainRkey(prefix: 'rec' | 'assign' | 'ver'): string {
+  return `${prefix}-${randomUUID()}`;
+}
 
 // ─── Demo template ────────────────────────────────────────────────────────────
 
@@ -293,7 +298,7 @@ function processClaimsForTask(
 
   // Write a match.recommendation record (audit snapshot regardless of assignment success)
   const now = new Date().toISOString();
-  const recRkey = `rec-${Date.now()}-${taskUri.slice(-8)}`;
+  const recRkey = makeProofChainRkey('rec');
   const recommendation: MatchRecommendation = {
     $type: 'network.mycelium.match.recommendation',
     taskUri,
@@ -335,7 +340,7 @@ function processClaimsForTask(
       if (entry) entry.activeTasks.push(taskUri);
 
       // Write a task.assignment record that links the claim and the recommendation
-      const assignRkey = `assign-${Date.now()}-${taskUri.slice(-8)}`;
+      const assignRkey = makeProofChainRkey('assign');
       const assignment: TaskAssignment = {
         $type: 'network.mycelium.task.assignment',
         taskUri,
@@ -444,7 +449,7 @@ function writeVerificationResult(
     evidence,
     createdAt: now,
   };
-  const rkey = `ver-${Date.now()}-${completionUri.slice(-8)}`;
+  const rkey = makeProofChainRkey('ver');
   const result = putRecord(mayor.repo, 'network.mycelium.verification.result', rkey, verResult);
   return result.uri;
 }

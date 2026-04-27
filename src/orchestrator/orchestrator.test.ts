@@ -10,6 +10,7 @@ import type {
   Firehose,
   Mayor,
   ReputationDimensions,
+  TaskCompletion,
   TaskPosting,
 } from '../schemas/types.js';
 
@@ -241,6 +242,41 @@ describe('Mayor claim processing (async)', () => {
     // Expert should win (higher capability score)
     expect(posting.assigneeDid).toBe(expertAgent.identity.did);
   });
+
+  it('writes parseable proof-chain rkeys for short task rkeys', async () => {
+    const agent = makeAgent(firehose, 'short-rkey-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript']);
+
+    const { uri: taskUri } = postTask(mayorRepo, {
+      title: 'Short rkey task',
+      description: 'Exercise proof-chain rkey generation',
+      requiredCapabilities: [{ domain: 'frontend', tags: ['react'], minProficiency: 'beginner' }],
+      complexity: 'medium',
+      priority: 'high',
+      context: { projectName: 'Test', projectDescription: 'Short rkey coverage' },
+      deliverables: ['component'],
+      requesterDid: mayor.identity.did,
+    }, 't1');
+
+    claimTask(agent.repo, taskUri, 'Short rkey task', {
+      approach: 'Use React',
+      estimatedDuration: 'PT1H',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const proofEvents = firehose.log.filter((e) =>
+      e.collection === 'network.mycelium.match.recommendation' ||
+      e.collection === 'network.mycelium.task.assignment',
+    );
+    expect(proofEvents).toHaveLength(2);
+    for (const event of proofEvents) {
+      expect(event.rkey).not.toContain('/');
+      expect(`at://${event.did}/${event.collection}/${event.rkey}`.split('/')).toHaveLength(5);
+    }
+  });
 });
 
 describe('Mayor completion handling', () => {
@@ -287,6 +323,38 @@ describe('Mayor completion handling', () => {
         (e.record as { subjectDid?: string }).subjectDid === agent.identity.did,
     );
     expect(stamps).toHaveLength(1);
+  });
+
+  it('writes a parseable verification rkey for short completion rkeys', async () => {
+    const agent = makeAgent(firehose, 'short-completion-agent.local');
+    writeProfile(agent.repo, agent.identity);
+    writeCapability(agent.repo, 'react-dev', 'frontend', 'expert', ['react', 'typescript', 'components']);
+
+    const task001Uri = mayor.postedTasks.get('task-001')!.uri;
+    const { uri: claimUri } = claimTask(agent.repo, task001Uri, 'Design component library', {
+      approach: 'Use React',
+      estimatedDuration: 'PT52M',
+      confidenceLevel: 'high',
+    }, ['react-dev']);
+
+    await new Promise((r) => setTimeout(r, 50));
+    startTask(mayorRepo, task001Uri);
+
+    putRecord(agent.repo, 'network.mycelium.task.completion', 'c1', {
+      $type: 'network.mycelium.task.completion',
+      taskUri: task001Uri,
+      claimUri,
+      completerDid: agent.identity.did,
+      summary: 'Implemented the component library with tested reusable components',
+      artifacts: [{ name: 'Button.tsx', type: 'code', contentHash: 'sha256-short', size: 100, description: 'Component' }],
+      metrics: { executionTime: 'PT52M', testsPassed: 5, testsTotal: 5, coveragePercent: 90 },
+      createdAt: new Date().toISOString(),
+    } satisfies TaskCompletion);
+
+    const verificationEvent = firehose.log.find((e) => e.collection === 'network.mycelium.verification.result');
+    expect(verificationEvent).toBeDefined();
+    expect(verificationEvent!.rkey).not.toContain('/');
+    expect(`at://${verificationEvent!.did}/${verificationEvent!.collection}/${verificationEvent!.rkey}`.split('/')).toHaveLength(5);
   });
 
   it('posts task-003 after task-002 is accepted', async () => {

@@ -70,6 +70,17 @@ function handleOrDid(did: string, handles: Map<string, string>): string {
   return handles.get(did) ?? shortDid(did);
 }
 
+const ATTESTOR_LABELS: Record<string, string> = {
+  requester: 'Requester',
+  mayor: 'Mayor',
+  peer: 'Peer',
+  verifier: 'Verifier',
+};
+
+function attestorLabel(attestorType: ReputationStamp['attestorType'] | string | undefined): string {
+  return attestorType ? (ATTESTOR_LABELS[attestorType] ?? attestorType) : 'Mayor';
+}
+
 // ─── WorkTrace builder ────────────────────────────────────────────────────────
 
 /**
@@ -289,7 +300,7 @@ export function buildWorkTrace(
   for (const se of stampEvents) {
     const stamp = se.record as ReputationStamp;
     const stampUri = `at://${se.did}/${se.collection}/${se.rkey}`;
-    const attestorLabel = stamp.attestorType === 'requester' ? 'Requester' : 'Mayor';
+    const label = attestorLabel(stamp.attestorType);
     steps.push({
       role: 'attestor',
       eventType: 'reputation.stamp',
@@ -297,7 +308,7 @@ export function buildWorkTrace(
       did: se.did,
       seq: se.seq,
       timestamp: se.timestamp,
-      summary: `${attestorLabel} issued ${stamp.assessment} stamp to ${handleOrDid(stamp.subjectDid, handles)} (score: ${stamp.overallScore.toFixed(0)}/100)`,
+      summary: `${label} issued ${stamp.assessment} stamp to ${handleOrDid(stamp.subjectDid, handles)} (score: ${stamp.overallScore.toFixed(0)}/100)`,
       detail: {
         assessment: stamp.assessment,
         overallScore: stamp.overallScore,
