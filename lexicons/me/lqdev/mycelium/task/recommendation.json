@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.task.recommendation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskUri", "coordinatorDid", "policy", "rankedClaims", "createdAt"],
+        "properties": {
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "coordinatorDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "policy": { "type": "string", "maxLength": 256 },
+          "rankedClaims": {
+            "type": "array",
+            "maxLength": 128,
+            "items": { "type": "ref", "ref": "me.lqdev.mycelium.common#rankedClaim" }
+          },
+          "selectedClaimUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

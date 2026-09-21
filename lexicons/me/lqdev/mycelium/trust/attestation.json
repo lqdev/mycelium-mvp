@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.trust.attestation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subjectDid", "attestorDid", "evidenceUris", "dimensions", "summary", "createdAt"],
+        "properties": {
+          "subjectDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "attestorDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "evidenceUris": { "type": "array", "items": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" }, "maxLength": 128 },
+          "dimensions": { "type": "unknown" },
+          "summary": { "type": "string", "maxLength": 10000 },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

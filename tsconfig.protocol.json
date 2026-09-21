@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "src/protocol/**/*.ts",
+    "src/errors.ts",
+    "src/identity/index.ts",
+    "src/schemas/types.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "data",
+    "src/**/*.test.ts",
+    "src/protocol/generated/index.ts"
+  ]
+}

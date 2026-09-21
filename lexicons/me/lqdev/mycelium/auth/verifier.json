@@ -1,0 +1,14 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.auth.verifier",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Mycelium verifier",
+      "detail": "Create independent verification results.",
+      "permissions": [
+        { "type": "permission", "resource": "repo", "action": ["create"], "collection": ["me.lqdev.mycelium.verification.result"] }
+      ]
+    }
+  }
+}

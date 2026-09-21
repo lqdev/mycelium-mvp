@@ -1,0 +1,21 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.task.cancellation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskUri", "requesterDid", "reason", "createdAt"],
+        "properties": {
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "requesterDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "reason": { "type": "string", "maxLength": 10000 },
+          "supersedesUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

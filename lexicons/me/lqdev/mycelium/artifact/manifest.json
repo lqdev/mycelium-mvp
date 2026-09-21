@@ -1,0 +1,23 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.artifact.manifest",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["artifactId", "cid", "mediaType", "size", "producerDid", "createdAt"],
+        "properties": {
+          "artifactId": { "type": "string", "maxLength": 512 },
+          "cid": { "type": "ref", "ref": "me.lqdev.mycelium.common#cid" },
+          "mediaType": { "type": "string", "maxLength": 256 },
+          "size": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "producerDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "sourceUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

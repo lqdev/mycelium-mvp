@@ -48,6 +48,46 @@ export class SchemaValidationError extends MyceliumError {
   }
 }
 
+export class ProtocolValidationError extends MyceliumError {
+  readonly collection: string;
+  readonly details: unknown;
+
+  constructor(collection: string, details: unknown) {
+    super(
+      'PROTOCOL_VALIDATION',
+      `Protocol 0.1 validation failed for collection "${collection}"`,
+    );
+    this.name = 'ProtocolValidationError';
+    this.collection = collection;
+    this.details = details;
+  }
+}
+
+export class PermissionResolutionError extends MyceliumError {
+  readonly permissionSet: string | undefined;
+
+  constructor(message: string, permissionSet?: string) {
+    super('PERMISSION_RESOLUTION', message);
+    this.name = 'PermissionResolutionError';
+    this.permissionSet = permissionSet;
+  }
+}
+
+export class PermissionDeniedError extends MyceliumError {
+  readonly collection: string;
+  readonly action: string;
+
+  constructor(collection: string, action: string) {
+    super(
+      'PERMISSION_DENIED',
+      `Permission denied for ${action} on collection "${collection}"`,
+    );
+    this.name = 'PermissionDeniedError';
+    this.collection = collection;
+    this.action = action;
+  }
+}
+
 export class ImportVerificationError extends MyceliumError {
   readonly commitSeq: number;
 

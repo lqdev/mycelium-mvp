@@ -58,6 +58,11 @@ const SCHEMA_SQL = `
     created_at   VARCHAR NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS protocol_cursors (
+    did          VARCHAR PRIMARY KEY,
+    seq          BIGINT NOT NULL
+  );
+
   -- Idempotent migration: add plc_did to pre-existing databases
   ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS plc_did VARCHAR;
 `;

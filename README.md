@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP — 481 tests passing · persistent identities · real LLM inference · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
+> **Status:** MVP plus the first Protocol 0.1 contract — 530 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
 
 ---
 
@@ -39,7 +39,7 @@ Mycelium follows AT Protocol's social architecture instead:
 
 ## Quick Start
 
-**Requirements:** Node.js ≥ 20
+**Requirements:** Node.js ≥ 22.13 for Protocol 0.1 work
 
 ```bash
 npm install
@@ -59,6 +59,11 @@ npm run reset
 
 # Run tests
 npm test
+
+# Validate and regenerate Protocol 0.1 Lexicons
+npm run lexicon:check
+npm run lexicon:generate
+npm run typecheck
 ```
 
 ---
@@ -179,9 +184,42 @@ curl "http://localhost:2583/xrpc/com.atproto.repo.listRecords?repo=<did>&collect
 | L5 | Governance | Reputation — signed stamps, multi-dimensional scores, trust levels |
 | L6 | Explanation | WorkTrace — derived proof chain for task lifecycle, evidence, and consequences |
 
+### Protocol 0.1 boundary
+
+The `me.lqdev.mycelium.*` namespace is the portable protocol contract. It is
+deliberately separate from the older `network.mycelium.*` simulation records:
+
+- **Principals:** requesters, workers, verifiers, and coordinators are repository
+  authors. A model, prompt, tool, document, artifact, or run is an addressable
+  resource and does not receive a permanent DID by default.
+- **Authorship:** requester attestations are authored by the requester;
+  recommendations and coordinator certifications are separate facts authored by
+  the coordinator. The AppView never rewrites one principal's record as another.
+- **Coordination:** competing claims are first-class. Requester-selected,
+  delegated-coordinator, committee, deterministic-bounty, and self-service
+  governance are represented as task data rather than a mandatory Mayor role.
+- **Projection:** `ProtocolAppView` is rebuildable from a PDS snapshot plus
+  ordered events. It validates authorship, ignores stale per-DID cursors,
+  quarantines invalid records, and exposes deterministic projection hashes.
+- **Permissions:** role permission sets resolve to narrow `repo:<collection>?action=create`
+  scopes; expired or invalid resolution fails closed.
+
+Validate the checked-in Lexicons and the focused Protocol 0.1 type boundary with:
+
+```bash
+npm run lexicon:check
+npm run typecheck
+npm test -- --reporter=dot src/protocol
+```
+
+`src/protocol/ingestion.ts` provides the snapshot/live handoff and cursor-store
+contract. The current in-memory adapter is the conformance reference; the
+official PDS CAR/`subscribeRepos` adapter and hosted AppView are the next
+deployment slice.
+
 ### Intelligence Providers
 
-Models are first-class entities with DIDs, enabling verifiable attribution:
+The legacy simulation displays models as named provider resources:
 
 ```
 GitHub Models (cloud)        Ollama (local)
@@ -289,7 +327,7 @@ curl "http://localhost:3000/api/tasks/task-001/trace"
 ## Testing
 
 ```bash
-npm test            # run all 481 tests once
+npm test            # run all 530 tests once
 npm run test:watch  # watch mode
 ```
 
@@ -312,6 +350,13 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Lexicon publishing** — Serve `network.mycelium.*` Lexicon JSON from a controlled domain so NSIDs are resolvable by any AT Protocol client (the `/.well-known/atproto-lexicon/:nsid` route exists; needs a registered domain)
-- **Federation v2** — Multi-Mayor federation with real cross-node task discovery is proven on the older [`feat/federation`](../../tree/feat/federation) branch; the next product step is forward-porting that topology onto the current proof-chain foundation.
-- **Production hardening** — Rate limiting, structured logging, health check endpoints, graceful shutdown
+- **Official PDS adapter** — Implement snapshot/CAR import and
+  `com.atproto.sync.subscribeRepos` decoding behind the `PdsEventSource`
+  interface; keep Jetstream as an optional legacy bridge.
+- **Hosted demo** — Run the official PDS and TypeScript AppView on one small
+  VM, persist PDS data and cursor state, and verify a disposable AppView rebuild
+  before publishing the demo URL. Keep the private PLC endpoint configurable;
+  do not claim public federation until its deployment is pinned and tested.
+- **Upstream generic seams** — Propose OAuth permission-set resolution and
+  PDS-side permission enforcement as generic changes in the forked .NET
+  repositories, without moving Mycelium-specific lexicons into those projects.

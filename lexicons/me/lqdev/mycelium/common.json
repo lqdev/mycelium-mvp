@@ -1,0 +1,45 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.common",
+  "defs": {
+    "did": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "atUri": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "cid": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "resourceRef": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": { "type": "string", "maxLength": 2048 },
+        "cid": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "knownValues": ["requester-selected", "delegated-coordinator", "committee", "deterministic-bounty", "self-service"] },
+        "coordinatorDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+        "delegationUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" }
+      }
+    },
+    "rankedClaim": {
+      "type": "object",
+      "required": ["claimUri", "workerDid", "score", "reasons"],
+      "properties": {
+        "claimUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+        "workerDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+        "score": { "type": "integer", "minimum": -1000000, "maximum": 1000000 },
+        "reasons": { "type": "array", "items": { "type": "string", "maxLength": 1024 }, "maxLength": 32 }
+      }
+    }
+  }
+}

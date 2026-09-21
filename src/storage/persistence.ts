@@ -141,7 +141,7 @@ export async function loadIdentities(): Promise<Map<string, AgentIdentity>> {
   for (const row of rows) {
     result.set(row.handle, {
       did: row.did,
-      plcDid: row.plc_did ?? undefined,
+      ...(row.plc_did ? { plcDid: row.plc_did } : {}),
       handle: row.handle,
       displayName: row.display_name,
       publicKey: Buffer.from(row.public_key, 'hex'),

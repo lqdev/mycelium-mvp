@@ -1,0 +1,14 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.auth.requester",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Mycelium requester",
+      "detail": "Create task offers, requester awards, acceptances, cancellations, delegations, revocations, and trust attestations.",
+      "permissions": [
+        { "type": "permission", "resource": "repo", "action": ["create"], "collection": ["me.lqdev.mycelium.task.offer", "me.lqdev.mycelium.task.award", "me.lqdev.mycelium.task.acceptance", "me.lqdev.mycelium.task.cancellation", "me.lqdev.mycelium.authority.delegation", "me.lqdev.mycelium.authority.revocation", "me.lqdev.mycelium.trust.attestation"] }
+      ]
+    }
+  }
+}
