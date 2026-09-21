@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP plus the first Protocol 0.1 contract — 530 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
+> **Status:** MVP plus the first Protocol 0.1 contract — 529 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
 
 ---
 
@@ -327,7 +327,7 @@ curl "http://localhost:3000/api/tasks/task-001/trace"
 ## Testing
 
 ```bash
-npm test            # run all 530 tests once
+npm test            # run all 529 tests once
 npm run test:watch  # watch mode
 ```
 
