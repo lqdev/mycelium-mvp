@@ -20,6 +20,7 @@
     "pds-init": "tsx --no-warnings scripts/pds-init.ts"
   },
   "dependencies": {
+    "@atproto/crypto": "^0.5.5",
     "@atproto/lex-cbor": "^0.1.6",
     "@atproto/repo": "^0.10.14",
     "@duckdb/node-api": "^1.5.0-r.1",

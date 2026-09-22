@@ -2,6 +2,9 @@ import { Repo, MemoryBlockstore, readCarWithRoot } from '@atproto/repo';
 import type { ProtocolRecordEnvelope } from '../protocol/types.js';
 import { isMyceliumCollection } from '../protocol/constants.js';
 import { validateProtocolRecord } from '../protocol/validation.js';
+import type {
+  RepositoryCommitVerifier,
+} from './repository-auth.js';
 
 export interface SnapshotQuarantine {
   collection: string;
@@ -53,6 +56,7 @@ export interface AuthoritativeRecoveryProvider {
 export interface RepoSnapshotAdapterOptions {
   endpoint: string;
   did: string;
+  commitVerifier: RepositoryCommitVerifier;
   fetchImpl?: typeof fetch;
 }
 
@@ -66,12 +70,14 @@ export interface RepoSnapshotAdapterOptions {
 export class AtprotoRepoSnapshotAdapter {
   private readonly endpoint: string;
   private readonly did: string;
+  private readonly commitVerifier: RepositoryCommitVerifier;
   private readonly fetchImpl: typeof fetch;
   private lastSnapshotValue: ProtocolRepoSnapshot | undefined;
 
   constructor(options: RepoSnapshotAdapterOptions) {
     this.endpoint = options.endpoint.replace(/\/+$/, '');
     this.did = options.did;
+    this.commitVerifier = options.commitVerifier;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     if (!this.endpoint) throw new Error('PDS endpoint is required');
     if (!this.did) throw new Error('Repository DID is required');
@@ -94,6 +100,7 @@ export class AtprotoRepoSnapshotAdapter {
     const snapshot = await decodeProtocolRepoSnapshot(
       new Uint8Array(await response.arrayBuffer()),
       this.did,
+      this.commitVerifier,
     );
     this.lastSnapshotValue = snapshot;
     return snapshot;
@@ -106,8 +113,16 @@ export class AtprotoRepoSnapshotAdapter {
 
 export async function decodeProtocolRepoSnapshot(
   carBytes: Uint8Array,
-  expectedDid?: string,
+  expectedDid: string,
+  commitVerifier: RepositoryCommitVerifier,
 ): Promise<ProtocolRepoSnapshot> {
+  if (commitVerifier === undefined) {
+    throw new Error('repository commit authenticity verifier is required');
+  }
+  if (expectedDid === undefined) {
+    throw new Error('repository DID is required for authenticated snapshot decoding');
+  }
+  await commitVerifier.verifySnapshot(carBytes, expectedDid);
   const { root, blocks } = await readCarWithRoot(carBytes);
   const storage = new MemoryBlockstore(blocks);
   const repo = await Repo.load(storage, root);
