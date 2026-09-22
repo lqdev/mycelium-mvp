@@ -110,6 +110,8 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     let openSettled = false;
     let hasOpened = false;
     let intentionallyClosed = false;
+    let handlingMessage = false;
+    let socketClosed = false;
     let resolveOpen!: () => void;
     let rejectOpen!: (error: Error) => void;
     const opened = new Promise<void>((resolve, reject) => {
@@ -154,7 +156,14 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     });
     socket.addEventListener('message', (event) => {
       messageChain = messageChain
-        .then(() => this.handleMessage(event.data, onEvent, onDiagnostic))
+        .then(async () => {
+          handlingMessage = true;
+          try {
+            await this.handleMessage(event.data, onEvent, onDiagnostic);
+          } finally {
+            handlingMessage = false;
+          }
+        })
         .catch((error: unknown) => {
           onDiagnostic?.({
             kind: 'frame',
@@ -181,8 +190,11 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     }
     return async () => {
       intentionallyClosed = true;
-      await messageChain;
-      socket.close();
+      if (!socketClosed) {
+        socketClosed = true;
+        socket.close();
+      }
+      if (!handlingMessage) await messageChain;
     };
   }
 

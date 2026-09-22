@@ -81,6 +81,7 @@ export class ProtocolIngestor {
       this.unsubscribe = await this.source.subscribe(
         this.streamSeq,
         (event) => {
+        if (this.statusValue.phase === 'stopped') return;
         const eventSeq = event.streamSeq ?? event.seq;
         if (event.tooBig) {
           this.bufferedEvents.push(event);
@@ -133,7 +134,7 @@ export class ProtocolIngestor {
             if (this.statusValue.recoveryRequired) await this.recover('live gap or tooBig event');
           })
           .catch((error: unknown) => {
-            this.handleLiveChainError(error);
+            return this.handleLiveChainError(error);
           });
         return this.liveEventChain;
         },
@@ -340,11 +341,11 @@ export class ProtocolIngestor {
     this.liveEventChain = this.liveEventChain
       .then(() => this.recover(reason))
       .catch((error: unknown) => {
-        this.handleLiveChainError(error);
+        return this.handleLiveChainError(error);
       });
   }
 
-  private handleLiveChainError(error: unknown): void {
+  private async handleLiveChainError(error: unknown): Promise<void> {
     this.acceptingLiveEvents = false;
     this.handoffInProgress = false;
     this.statusValue = {
@@ -352,6 +353,19 @@ export class ProtocolIngestor {
       phase: 'stopped',
       lastError: error instanceof Error ? error.message : String(error),
     };
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = undefined;
+    if (unsubscribe === undefined) return;
+    try {
+      await unsubscribe();
+    } catch (cleanupError) {
+      this.recordDiagnostic({
+        kind: 'recovery',
+        message: `subscription cleanup failed: ${
+          cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        }`,
+      });
+    }
   }
 
   private recordDiagnostic(diagnostic: IngestionDiagnostic): void {
@@ -422,11 +436,12 @@ export class DuckDbCursorStore implements CursorStore {
 
   async save(streamSeq: number): Promise<void> {
     const next = validCursor(streamSeq);
-    const current = await this.load();
-    if (current !== undefined && next <= current) return;
     await execute(
       this.conn,
-      `INSERT OR REPLACE INTO protocol_stream_cursors (name, stream_seq) VALUES ('subscribeRepos', $1)`,
+      `INSERT INTO protocol_stream_cursors (name, stream_seq)
+       VALUES ('subscribeRepos', $1)
+       ON CONFLICT (name) DO UPDATE SET
+         stream_seq = GREATEST(protocol_stream_cursors.stream_seq, EXCLUDED.stream_seq)`,
       [next],
     );
   }
@@ -445,7 +460,7 @@ function normaliseCursor(
 function isRecordArray(
   value: unknown,
 ): value is ReadonlyArray<ProtocolRecordEnvelope> {
-  return Array.isArray(value);
+  return Array.isArray(value) && value.every(isRecordEnvelope);
 }
 
 function isProtocolRepoSnapshot(
@@ -457,8 +472,32 @@ function isProtocolRepoSnapshot(
     typeof candidate.did === 'string' && candidate.did.length > 0 &&
     typeof candidate.repoRev === 'string' && candidate.repoRev.length > 0 &&
     typeof candidate.rootCid === 'string' && candidate.rootCid.length > 0 &&
-    Array.isArray(candidate.records) &&
-    Array.isArray(candidate.quarantined);
+    Array.isArray(candidate.records) && candidate.records.every(isRecordEnvelope) &&
+    Array.isArray(candidate.quarantined) && candidate.quarantined.every(isQuarantineEntry);
+}
+
+function isRecordEnvelope(value: unknown): value is ProtocolRecordEnvelope {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.uri !== 'string' || candidate.uri.length === 0 ||
+    typeof candidate.did !== 'string' || candidate.did.length === 0 ||
+    typeof candidate.collection !== 'string' || candidate.collection.length === 0 ||
+    typeof candidate.rkey !== 'string' || candidate.rkey.length === 0 ||
+    typeof candidate.cid !== 'string' || candidate.cid.length === 0 ||
+    typeof candidate.record !== 'object' || candidate.record === null ||
+    Array.isArray(candidate.record)) {
+    return false;
+  }
+  return candidate.uri === `at://${candidate.did}/${candidate.collection}/${candidate.rkey}`;
+}
+
+function isQuarantineEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.collection === 'string' && candidate.collection.length > 0 &&
+    typeof candidate.rkey === 'string' && candidate.rkey.length > 0 &&
+    typeof candidate.cid === 'string' && candidate.cid.length > 0 &&
+    typeof candidate.reason === 'string' && candidate.reason.length > 0;
 }
 
 function isAuthoritativeRecoverySnapshot(

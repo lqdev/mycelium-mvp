@@ -139,6 +139,17 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
     }
   });
 
+  it('persists the maximum cursor under concurrent out-of-order saves', async () => {
+    const { instance, conn } = await createDuckDB();
+    try {
+      const store = new DuckDbCursorStore(conn);
+      await Promise.all([store.save(17), store.save(91), store.save(42), store.save(63)]);
+      await expect(store.load()).resolves.toBe(91);
+    } finally {
+      instance.closeSync();
+    }
+  });
+
   it('does not lose events that arrive while the handoff cursor save is pending', async () => {
     const requester = generateIdentity('requester.demo.test', 'Requester');
     const offer = {
@@ -439,6 +450,62 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
     });
   });
 
+  it('closes the subscription and ignores events after live recovery failure', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    let unsubscribeCalls = 0;
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, []);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {
+          unsubscribeCalls++;
+        };
+      },
+      authoritativeRecovery: {
+        async recover() {
+          throw new Error('authoritative recovery unavailable');
+        },
+        async verifyBoundary() {
+          return true;
+        },
+      },
+    };
+    const ingestor = new ProtocolIngestor(source, new ProtocolAppView(), new MemoryCursorStore());
+    await ingestor.start();
+
+    const failure = emit?.({
+      streamSeq: 10,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:10.000Z',
+    });
+    if (failure !== undefined) await failure;
+
+    expect(unsubscribeCalls).toBe(1);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      bufferedEvents: 1,
+      lastError: 'authoritative recovery unavailable',
+    });
+    const bufferedAfterFailure = ingestor.status().bufferedEvents;
+    await emit?.({
+      streamSeq: 11,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'ignored-after-failure',
+      operation: 'delete',
+      timestamp: '2026-01-01T00:00:11.000Z',
+    });
+    expect(ingestor.status().bufferedEvents).toBe(bufferedAfterFailure);
+    expect(unsubscribeCalls).toBe(1);
+  });
+
   it('rejects an unverified boundary before replacing state or advancing the cursor', async () => {
     const requester = generateIdentity('requester.demo.test', 'Requester');
     const existingRecord = taskOffer(requester.did, 'existing-before-recovery');
@@ -490,6 +557,107 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
       phase: 'stopped',
       lastError: 'snapshot recovery boundary failed provider verification',
     });
+  });
+
+  it('rejects malformed recovery envelopes before replacing state or advancing the cursor', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const existingRecord = taskOffer(requester.did, 'existing-before-malformed-recovery');
+    const existingEnvelope: ProtocolRecordEnvelope = {
+      uri: `at://${requester.did}/${COLLECTIONS.taskOffer}/existing-before-malformed-recovery`,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'existing-before-malformed-recovery',
+      cid: 'cid-existing-before-malformed-recovery',
+      record: existingRecord,
+    };
+    const malformedSnapshot = {
+      ...metadataSnapshot(requester.did, []),
+      records: [null],
+    };
+    const malformedRecovery = {
+      snapshot: malformedSnapshot,
+      boundary: {
+        streamSeq: 10,
+        repoDid: requester.did,
+        repoRev: malformedSnapshot.repoRev,
+        proof: 'fixture:malformed',
+      },
+    } as unknown as AuthoritativeRecoverySnapshot;
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    const cursors = new MemoryCursorStore();
+    await cursors.save(7);
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, [existingEnvelope]);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+      authoritativeRecovery: {
+        async recover() {
+          return malformedRecovery;
+        },
+        async verifyBoundary() {
+          return true;
+        },
+      },
+    };
+    const appView = new ProtocolAppView();
+    const ingestor = new ProtocolIngestor(source, appView, cursors);
+    await ingestor.start();
+    const projectionBeforeRecovery = appView.projectionHash();
+
+    const recovery = emit?.({
+      streamSeq: 8,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:08.000Z',
+    });
+    if (recovery !== undefined) await recovery;
+
+    expect(appView.projectionHash()).toBe(projectionBeforeRecovery);
+    expect(appView.listRecords()).toHaveLength(1);
+    await expect(cursors.load()).resolves.toBe(7);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      lastError: 'snapshot recovery boundary is malformed or does not match repoRev',
+    });
+  });
+
+  it('rejects malformed array snapshots before resetting the AppView', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const existingRecord = taskOffer(requester.did, 'existing-before-array-snapshot');
+    const existingEnvelope: ProtocolRecordEnvelope = {
+      uri: `at://${requester.did}/${COLLECTIONS.taskOffer}/existing-before-array-snapshot`,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'existing-before-array-snapshot',
+      cid: 'cid-existing-before-array-snapshot',
+      record: existingRecord,
+    };
+    const cursors = new MemoryCursorStore();
+    await cursors.save(7);
+    const source: PdsEventSource = {
+      async snapshot() {
+        return [null] as unknown as ReadonlyArray<ProtocolRecordEnvelope>;
+      },
+      async subscribe() {
+        return async () => {};
+      },
+    };
+    const appView = new ProtocolAppView();
+    appView.ingestSnapshot([existingEnvelope]);
+    const projectionBeforeSnapshot = appView.projectionHash();
+    const ingestor = new ProtocolIngestor(source, appView, cursors);
+
+    await expect(ingestor.start()).rejects.toThrow('repository snapshot is malformed');
+    expect(appView.projectionHash()).toBe(projectionBeforeSnapshot);
+    expect(appView.listRecords()).toHaveLength(1);
+    await expect(cursors.load()).resolves.toBe(7);
   });
 
   it('rejects a recovery boundary behind the durable cursor without regressing it', async () => {
