@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP plus the first Protocol 0.1 contract — 535 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
+> **Status:** MVP plus the first Protocol 0.1 contract — 539 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
 
 ---
 
@@ -213,9 +213,20 @@ npm test -- --reporter=dot src/protocol
 ```
 
 `src/protocol/ingestion.ts` provides the snapshot/live handoff and cursor-store
-contract. The current in-memory adapter is the conformance reference; the
-official PDS CAR/`subscribeRepos` adapter and hosted AppView are the next
-deployment slice.
+contract. `AtprotoRepoSnapshotAdapter` in `src/atproto/repo-snapshot.ts` now
+uses the official `com.atproto.sync.getRepo` HTTP endpoint and the official
+AT Protocol repository/MST implementation to decode a real CAR export. It
+preserves the repository DID, collection, record key, record CID, and signed
+commit revision cursor before handing validated `ProtocolRecordEnvelope`
+values to `ProtocolAppView`. Unsupported collections, malformed records, and
+authorship failures are reported in the snapshot quarantine instead of being
+silently accepted.
+
+The live `com.atproto.sync.subscribeRepos` WebSocket event stream is still the
+next focused change. This PR intentionally stops at the rebuildable official
+snapshot path; the existing Jetstream bridge remains an optional legacy
+integration and is not a substitute for direct `subscribeRepos` cursor
+handoff.
 
 ### Intelligence Providers
 
@@ -350,9 +361,10 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Official PDS adapter** — Implement snapshot/CAR import and
-  `com.atproto.sync.subscribeRepos` decoding behind the `PdsEventSource`
-  interface; keep Jetstream as an optional legacy bridge.
+- **Live PDS event adapter** — Add direct
+  `com.atproto.sync.subscribeRepos` CBOR decoding and cursor handoff on top of
+  the official `getRepo` snapshot path; keep Jetstream as an optional legacy
+  bridge.
 - **Hosted demo** — Run the official PDS and TypeScript AppView on one small
   VM, persist PDS data and cursor state, and verify a disposable AppView rebuild
   before publishing the demo URL. Keep the private PLC endpoint configurable;

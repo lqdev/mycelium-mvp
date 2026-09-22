@@ -26,6 +26,14 @@ PDS repositories are authoritative. The Protocol 0.1 AppView:
 DuckDB is disposable projection state. Deleting it and replaying the same
 snapshot/events must produce the same projection hash.
 
+The first vertical slice implements step 1 through
+`AtprotoRepoSnapshotAdapter`: it fetches the official
+`com.atproto.sync.getRepo` CAR, traverses the repository MST with the official
+AT Protocol repository package, and preserves the signed commit revision as
+the snapshot cursor. Direct `com.atproto.sync.subscribeRepos` decoding and
+live cursor handoff remain a separate follow-up; Jetstream is not used to
+pretend that gap is closed.
+
 The live demo uses one small Linux VM with Caddy/TLS, the official Bluesky PDS,
 a private PLC directory backed by PostgreSQL, and the TypeScript AppView/API.
 App and PDS use separate registrable domains. The official PDS and PLC volumes
