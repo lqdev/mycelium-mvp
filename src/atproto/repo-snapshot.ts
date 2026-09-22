@@ -12,7 +12,10 @@ export interface SnapshotQuarantine {
 
 export interface ProtocolRepoSnapshot {
   did: string;
-  cursor: string;
+  /** Signed per-repository revision from the getRepo commit. */
+  repoRev: string;
+  /** Global subscribeRepos sequence when a source can provide one. */
+  streamSeq?: number;
   rootCid: string;
   records: ReadonlyArray<ProtocolRecordEnvelope>;
   quarantined: ReadonlyArray<SnapshotQuarantine>;
@@ -27,9 +30,9 @@ export interface RepoSnapshotAdapterOptions {
 /**
  * Reads the official com.atproto.sync.getRepo CAR export for one repository.
  *
- * The returned cursor is the signed repository commit revision (`rev`), not a
- * locally invented sequence. A subscribeRepos consumer can use that revision
- * when it adds the live handoff in a later change.
+ * getRepo exposes a signed repository revision, not a global subscribeRepos
+ * sequence. The adapter therefore returns `repoRev`; streamSeq is populated
+ * only by a source that has an authoritative firehose boundary.
  */
 export class AtprotoRepoSnapshotAdapter {
   private readonly endpoint: string;
@@ -142,7 +145,7 @@ export async function decodeProtocolRepoSnapshot(
 
   return {
     did: repo.did,
-    cursor: repo.commit.rev,
+    repoRev: repo.commit.rev,
     rootCid: root.toString(),
     records,
     quarantined,

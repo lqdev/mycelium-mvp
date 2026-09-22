@@ -14,7 +14,7 @@ import { createDuckDB } from '../storage/duckdb.js';
 import { DuckDbCursorStore } from './ingestion.js';
 
 describe('Protocol 0.1 snapshot/live ingestion', () => {
-  it('buffers events during snapshot, replays them, and persists per-DID cursors', async () => {
+  it('buffers events during snapshot, replays them, and persists one global stream cursor', async () => {
     const requester = generateIdentity('requester.demo.test', 'Requester');
     const offer = {
       $type: COLLECTIONS.taskOffer,
@@ -70,8 +70,8 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
     const { instance, conn } = await createDuckDB();
     try {
       const store = new DuckDbCursorStore(conn);
-      await store.save({ 'did:key:z6MkRequester': 42 });
-      await expect(store.load()).resolves.toEqual({ 'did:key:z6MkRequester': 42 });
+      await store.save(42);
+      await expect(store.load()).resolves.toBe(42);
     } finally {
       instance.closeSync();
     }

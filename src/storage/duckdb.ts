@@ -63,6 +63,11 @@ const SCHEMA_SQL = `
     seq          BIGINT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS protocol_stream_cursors (
+    name         VARCHAR PRIMARY KEY,
+    stream_seq   BIGINT NOT NULL
+  );
+
   -- Idempotent migration: add plc_did to pre-existing databases
   ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS plc_did VARCHAR;
 `;
