@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { ProtocolAppView, type ProtocolCommitEvent } from '../protocol/appview.js';
 import { COLLECTIONS } from '../protocol/constants.js';
 import { MemoryCursorStore, ProtocolIngestor } from '../protocol/ingestion.js';
-import type { ProtocolRepoSnapshot } from './repo-snapshot.js';
+import type {
+  AuthoritativeRecoverySnapshot,
+  ProtocolRepoSnapshot,
+} from './repo-snapshot.js';
 import {
   AtprotoSubscribeReposSource,
   decodeSubscribeReposFrame,
@@ -77,14 +80,28 @@ async function makeCommitFrame(input: {
   return new Uint8Array([...header, ...payload]);
 }
 
-function snapshot(records: ProtocolRepoSnapshot['records'], streamSeq?: number): ProtocolRepoSnapshot {
+function snapshot(records: ProtocolRepoSnapshot['records']): ProtocolRepoSnapshot {
   return {
     did,
     repoRev: 'snapshot-rev',
-    ...(streamSeq === undefined ? {} : { streamSeq }),
     rootCid: 'bafyreibqlm3quhnjyhqlsjj24uauvaoonmyi3jfkzqr44mzecn2yq2xpmu',
     records,
     quarantined: [],
+  };
+}
+
+function authoritativeRecovery(
+  recoverySnapshot: ProtocolRepoSnapshot,
+  streamSeq: number,
+): AuthoritativeRecoverySnapshot {
+  return {
+    snapshot: recoverySnapshot,
+    boundary: {
+      streamSeq,
+      repoDid: recoverySnapshot.did,
+      repoRev: recoverySnapshot.repoRev,
+      proof: `fixture:${recoverySnapshot.did}:${recoverySnapshot.repoRev}:${streamSeq}`,
+    },
   };
 }
 
@@ -235,7 +252,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     const observedSnapshot = await source.snapshot();
     expect(observedSnapshot.repoRev).toBe('snapshot-rev');
-    expect(observedSnapshot.streamSeq).toBeUndefined();
+    expect('streamSeq' in observedSnapshot).toBe(false);
     socket.emit('close', undefined);
     expect(diagnostics).toEqual([{
       kind: 'recovery',
@@ -387,11 +404,11 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
       cid: oldBlock.cid.toString(),
       record: oldRecord,
     }]);
-    const recovered = snapshot([{
+    const recovered = authoritativeRecovery(snapshot([{
       ...first.records[0]!,
       cid: newBlock.cid.toString(),
       record: newRecord,
-    }], 200);
+    }]), 200);
     const tooBigFrame = await makeCommitFrame({
       seq: 200,
       action: 'update',
@@ -414,7 +431,15 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
           return first;
         },
       },
-      recover: async () => recovered,
+      authoritativeRecovery: {
+        async recover() {
+          return recovered;
+        },
+        async verifyBoundary(recovery) {
+          return recovery.boundary.proof ===
+            `fixture:${recovery.snapshot.did}:${recovery.snapshot.repoRev}:${recovery.boundary.streamSeq}`;
+        },
+      },
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));
