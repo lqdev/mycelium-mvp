@@ -108,6 +108,7 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     const url = new URL(this.endpoint);
     if (streamSeq !== undefined) url.searchParams.set('cursor', String(streamSeq));
     const socket = this.websocketFactory(url.toString());
+    let messageChain: Promise<void> = Promise.resolve();
     let settled = false;
     let resolveOpen!: () => void;
     let rejectOpen!: (error: Error) => void;
@@ -135,7 +136,8 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
       }
     });
     socket.addEventListener('message', (event) => {
-      void this.handleMessage(event.data, onEvent, onDiagnostic);
+      messageChain = messageChain.then(() =>
+        this.handleMessage(event.data, onEvent, onDiagnostic));
     });
 
     if (socket.readyState === 1) resolveOpen();

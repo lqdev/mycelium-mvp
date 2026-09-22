@@ -161,6 +161,54 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     }
   });
 
+  it('processes WebSocket frames FIFO even when an event callback is asynchronous', async () => {
+    const firstFrame = await makeCommitFrame({
+      seq: 1,
+      action: 'delete',
+      path: `${COLLECTIONS.taskOffer}/task-1`,
+    });
+    const secondFrame = await makeCommitFrame({
+      seq: 2,
+      action: 'delete',
+      path: `${COLLECTIONS.taskOffer}/task-2`,
+    });
+    let socket!: FixtureSocket;
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    let secondFinished!: () => void;
+    const firstRelease = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStartedPromise = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const secondFinishedPromise = new Promise<void>((resolve) => { secondFinished = resolve; });
+    const seen: number[] = [];
+    const source = new AtprotoSubscribeReposSource({
+      endpoint: 'https://pds.example',
+      snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      websocketFactory: () => {
+        socket = new FixtureSocket();
+        queueMicrotask(() => socket.emit('open'));
+        return socket;
+      },
+    });
+    const unsubscribe = await source.subscribe(undefined, async (event) => {
+      seen.push(event.streamSeq!);
+      if (event.streamSeq === 1) {
+        firstStarted();
+        await firstRelease;
+      } else if (event.streamSeq === 2) {
+        secondFinished();
+      }
+    });
+
+    socket.emit('message', firstFrame);
+    socket.emit('message', secondFrame);
+    await firstStartedPromise;
+    expect(seen).toEqual([1]);
+    releaseFirst();
+    await secondFinishedPromise;
+    expect(seen).toEqual([1, 2]);
+    await unsubscribe();
+  });
+
   it('replays snapshot plus update/delete live events to the ordered rebuild hash', async () => {
     const initial = {
       $type: COLLECTIONS.taskOffer,
