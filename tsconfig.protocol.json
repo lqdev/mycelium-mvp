@@ -8,6 +8,7 @@
   "include": [
     "src/protocol/**/*.ts",
     "src/atproto/repo-snapshot.ts",
+    "src/atproto/subscribe-repos.ts",
     "src/errors.ts",
     "src/identity/index.ts",
     "src/schemas/types.ts"

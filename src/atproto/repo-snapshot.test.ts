@@ -10,11 +10,11 @@ const did = 'did:plc:myceliumfixture';
 const car = await readFile(new URL('./minimal-repo.car', import.meta.url));
 
 describe('official AT Protocol repository snapshots', () => {
-  it('decodes a getRepo CAR, preserving repo identity, record paths, CIDs, and revision cursor', async () => {
+  it('decodes a getRepo CAR, preserving repo identity, record paths, CIDs, and repo revision', async () => {
     const snapshot = await decodeProtocolRepoSnapshot(car, did);
 
     expect(snapshot.did).toBe(did);
-    expect(snapshot.cursor).toBe('3jzfcijyqzs2a');
+    expect(snapshot.repoRev).toBe('3jzfcijyqzs2a');
     expect(snapshot.rootCid).toBe('bafyreibqlm3quhnjyhqlsjj24uauvaoonmyi3jfkzqr44mzecn2yq2xpmu');
     expect(snapshot.records).toHaveLength(2);
     expect(snapshot.records.map(({ uri }) => uri)).toEqual([
@@ -47,11 +47,15 @@ describe('official AT Protocol repository snapshots', () => {
     const snapshot = await decodeProtocolRepoSnapshot(car, did);
     const appView = new ProtocolAppView();
 
-    appView.ingestSnapshot(snapshot.records);
+    appView.ingestSnapshot(snapshot.records, {
+      did: snapshot.did,
+      repoRev: snapshot.repoRev,
+    });
 
     expect(appView.health()).toMatchObject({
       recordCount: 2,
       quarantinedCount: 0,
+      repoRevs: { [did]: '3jzfcijyqzs2a' },
     });
     expect(appView.projectTasks()).toMatchObject([{
       taskUri: `at://${did}/me.lqdev.mycelium.task.offer/offer-1`,
@@ -86,6 +90,6 @@ describe('official AT Protocol repository snapshots', () => {
     );
     expect(requestedHeaders?.get('accept')).toBe('application/vnd.ipld.car');
     expect(requestedHeaders?.has('authorization')).toBe(false);
-    expect(adapter.lastSnapshot()?.cursor).toBe('3jzfcijyqzs2a');
+    expect(adapter.lastSnapshot()?.repoRev).toBe('3jzfcijyqzs2a');
   });
 });

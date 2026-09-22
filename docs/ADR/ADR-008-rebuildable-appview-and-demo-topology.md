@@ -18,7 +18,8 @@ PDS repositories are authoritative. The Protocol 0.1 AppView:
 1. imports a repository snapshot/CAR;
 2. applies historical commit events;
 3. drains buffered live `com.atproto.sync.subscribeRepos` events;
-4. persists per-repository cursors and deduplicates events;
+4. persists one numeric global firehose cursor per subscription and deduplicates
+   events;
 5. quarantines invalid protocol records instead of projecting them;
 6. computes a deterministic projection hash;
 7. exposes derived task state, authority explanations, conflicts, and ingest health.
@@ -26,13 +27,27 @@ PDS repositories are authoritative. The Protocol 0.1 AppView:
 DuckDB is disposable projection state. Deleting it and replaying the same
 snapshot/events must produce the same projection hash.
 
-The first vertical slice implements step 1 through
-`AtprotoRepoSnapshotAdapter`: it fetches the official
-`com.atproto.sync.getRepo` CAR, traverses the repository MST with the official
-AT Protocol repository package, and preserves the signed commit revision as
-the snapshot cursor. Direct `com.atproto.sync.subscribeRepos` decoding and
-live cursor handoff remain a separate follow-up; Jetstream is not used to
-pretend that gap is closed.
+The snapshot boundary is explicit: `AtprotoRepoSnapshotAdapter` fetches the
+official `com.atproto.sync.getRepo` CAR, traverses the repository MST with the
+official AT Protocol repository package, and preserves the signed commit
+revision as `repoRev`. That revision is not a global stream cursor.
+
+`AtprotoSubscribeReposSource` implements the official
+`com.atproto.sync.subscribeRepos` WebSocket protocol. Frames use concatenated
+CBOR header/payload objects; commit blocks are CAR bytes and operations carry
+record CIDs and paths. `ProtocolIngestor` persists the numeric global `seq`,
+buffers frames while getRepo loads, replays in stream order, and reports
+identity/account/handle/info/unknown frames as diagnostics. A sequence gap or
+`tooBig` commit triggers snapshot recovery and is not considered recovered
+unless the replacement snapshot supplies an authoritative `streamSeq`
+boundary. The normal getRepo snapshot path never fabricates that boundary;
+recovery therefore requires an explicit source provider that returns the
+snapshot together with the authoritative global sequence. Jetstream remains an
+optional legacy/federation adapter.
+
+Commit signature verification against resolved DID keys is intentionally
+deferred to a separate follow-up; this slice does not claim public federation
+readiness.
 
 The live demo uses one small Linux VM with Caddy/TLS, the official Bluesky PDS,
 a private PLC directory backed by PostgreSQL, and the TypeScript AppView/API.

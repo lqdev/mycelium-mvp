@@ -199,8 +199,9 @@ deliberately separate from the older `network.mycelium.*` simulation records:
   delegated-coordinator, committee, deterministic-bounty, and self-service
   governance are represented as task data rather than a mandatory Mayor role.
 - **Projection:** `ProtocolAppView` is rebuildable from a PDS snapshot plus
-  ordered events. It validates authorship, ignores stale per-DID cursors,
-  quarantines invalid records, and exposes deterministic projection hashes.
+  ordered events. It validates authorship, deduplicates global firehose
+  sequences, quarantines invalid records, and exposes deterministic projection
+  hashes.
 - **Permissions:** role permission sets resolve to narrow `repo:<collection>?action=create`
   scopes; expired or invalid resolution fails closed.
 
@@ -217,16 +218,31 @@ contract. `AtprotoRepoSnapshotAdapter` in `src/atproto/repo-snapshot.ts` now
 uses the official `com.atproto.sync.getRepo` HTTP endpoint and the official
 AT Protocol repository/MST implementation to decode a real CAR export. It
 preserves the repository DID, collection, record key, record CID, and signed
-commit revision cursor before handing validated `ProtocolRecordEnvelope`
-values to `ProtocolAppView`. Unsupported collections, malformed records, and
-authorship failures are reported in the snapshot quarantine instead of being
-silently accepted.
+commit revision as `repoRev` before handing validated
+`ProtocolRecordEnvelope` values to `ProtocolAppView`. A getRepo revision is
+per-repository metadata, not a firehose cursor; `streamSeq` is only populated
+when a source has a global subscribeRepos boundary. Unsupported collections,
+malformed records, and authorship failures are reported in the snapshot
+quarantine instead of being silently accepted.
 
-The live `com.atproto.sync.subscribeRepos` WebSocket event stream is still the
-next focused change. This PR intentionally stops at the rebuildable official
-snapshot path; the existing Jetstream bridge remains an optional legacy
-integration and is not a substitute for direct `subscribeRepos` cursor
+`AtprotoSubscribeReposSource` in `src/atproto/subscribe-repos.ts` consumes the
+official `com.atproto.sync.subscribeRepos` WebSocket format: each frame is two
+concatenated CBOR objects (the `{ op, t }` header and payload), and commit
+`blocks` are decoded as an official CAR. It handles create, update, and delete
+operations while preserving the global `seq`, commit CID, repository `rev`,
+`since`, record path, and operation CID. Identity/account/handle/info and
+unknown frames become observable ingestion diagnostics. `ProtocolIngestor`
+persists one numeric `streamSeq` per subscription, buffers during snapshot
+load, deduplicates replay, and requires a fresh snapshot with an authoritative
+stream boundary after a gap or `tooBig` commit. A plain getRepo snapshot never
+supplies that boundary; recovery must be provided by a source that can return a
+snapshot paired with an authoritative global stream sequence. Jetstream remains
+an optional legacy integration and is not a substitute for this direct cursor
 handoff.
+
+Commit signature verification against resolved DID keys is deliberately
+deferred to a separate follow-up. This slice therefore does not claim public
+federation readiness.
 
 ### Intelligence Providers
 
@@ -338,7 +354,7 @@ curl "http://localhost:3000/api/tasks/task-001/trace"
 ## Testing
 
 ```bash
-npm test            # run all 535 tests once
+npm test            # run all 543 tests once
 npm run test:watch  # watch mode
 ```
 
@@ -361,10 +377,8 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Live PDS event adapter** — Add direct
-  `com.atproto.sync.subscribeRepos` CBOR decoding and cursor handoff on top of
-  the official `getRepo` snapshot path; keep Jetstream as an optional legacy
-  bridge.
+- **Commit authenticity** — Verify commit signatures against resolved DID keys
+  before making a public federation-readiness claim.
 - **Hosted demo** — Run the official PDS and TypeScript AppView on one small
   VM, persist PDS data and cursor state, and verify a disposable AppView rebuild
   before publishing the demo URL. Keep the private PLC endpoint configurable;

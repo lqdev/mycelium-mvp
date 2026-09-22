@@ -20,13 +20,21 @@ import type {
 } from './types.js';
 
 export interface ProtocolCommitEvent {
-  seq: number;
+  /** Global subscribeRepos firehose sequence. */
+  streamSeq?: number | undefined;
+  /** Legacy simulation alias for streamSeq; never a repository revision. */
+  seq?: number;
   did: string;
   collection: string;
   rkey: string;
   operation: 'create' | 'update' | 'delete';
   record?: unknown;
   cid?: string;
+  commitCid?: string;
+  repoRev?: string;
+  since?: string | null;
+  tooBig?: boolean;
+  rebase?: boolean;
   timestamp: string;
 }
 
@@ -35,8 +43,16 @@ export interface QuarantinedEvent {
   reason: string;
 }
 
+export interface ProtocolSnapshotMetadata {
+  did: string;
+  repoRev: string;
+  streamSeq?: number | undefined;
+}
+
 export interface AppViewHealth {
   cursors: Readonly<Record<string, number>>;
+  streamSeq?: number | undefined;
+  repoRevs: Readonly<Record<string, string>>;
   recordCount: number;
   quarantinedCount: number;
   projectionHash: string;
@@ -59,6 +75,8 @@ export class ProtocolAppView {
   private readonly deleted = new Set<string>();
   private readonly processedEvents = new Set<string>();
   private readonly cursorsByDid = new Map<string, number>();
+  private readonly repoRevsByDid = new Map<string, string>();
+  private lastStreamSeq: number | undefined;
   private readonly quarantine: QuarantinedEvent[] = [];
 
   reset(): void {
@@ -66,10 +84,17 @@ export class ProtocolAppView {
     this.deleted.clear();
     this.processedEvents.clear();
     this.cursorsByDid.clear();
+    this.repoRevsByDid.clear();
+    this.lastStreamSeq = undefined;
     this.quarantine.length = 0;
   }
 
-  ingestSnapshot(snapshot: ReadonlyArray<ProtocolRecordEnvelope>): void {
+  ingestSnapshot(
+    snapshot: ReadonlyArray<ProtocolRecordEnvelope>,
+    metadata?: ProtocolSnapshotMetadata,
+  ): void {
+    if (metadata?.streamSeq !== undefined) this.lastStreamSeq = metadata.streamSeq;
+    if (metadata !== undefined) this.repoRevsByDid.set(metadata.did, metadata.repoRev);
     const ordered = [...snapshot].sort((a, b) => a.uri.localeCompare(b.uri));
     for (const envelope of ordered) {
       const expectedUri = canonicalUri(envelope.did, envelope.collection, envelope.rkey);
@@ -112,14 +137,24 @@ export class ProtocolAppView {
   }
 
   ingest(event: ProtocolCommitEvent): boolean {
+    const streamSeq = event.streamSeq ?? event.seq;
+    if (event.tooBig) {
+      this.quarantine.push({ event, reason: 'subscribeRepos commit set tooBig; snapshot recovery required' });
+      if (streamSeq !== undefined) this.advanceCursor(event.did, streamSeq, event.repoRev);
+      return false;
+    }
+    if (streamSeq === undefined || !Number.isSafeInteger(streamSeq) || streamSeq < 0) {
+      this.quarantine.push({ event, reason: 'commit is missing a valid global stream sequence' });
+      return false;
+    }
     if (!isMyceliumCollection(event.collection)) return false;
-    const eventId = `${event.did}:${event.seq}:${event.operation}:${event.collection}:${event.rkey}`;
+    const eventId = `${event.did}:${streamSeq}:${event.operation}:${event.collection}:${event.rkey}`;
     if (this.processedEvents.has(eventId)) return false;
     this.processedEvents.add(eventId);
 
     const previous = this.cursorsByDid.get(event.did) ?? 0;
-    if (event.seq <= previous) return false;
-    this.cursorsByDid.set(event.did, event.seq);
+    if (streamSeq < previous) return false;
+    this.advanceCursor(event.did, streamSeq, event.repoRev);
 
     const uri = uriFor(event);
     if (event.operation === 'delete') {
@@ -160,7 +195,8 @@ export class ProtocolAppView {
     this.reset();
     this.ingestSnapshot(snapshot);
     const ordered = [...events].sort((a, b) =>
-      a.did.localeCompare(b.did) || a.seq - b.seq || a.rkey.localeCompare(b.rkey));
+      (a.streamSeq ?? a.seq ?? 0) - (b.streamSeq ?? b.seq ?? 0) ||
+      a.did.localeCompare(b.did) || a.rkey.localeCompare(b.rkey));
     for (const event of ordered) this.ingest(event);
   }
 
@@ -178,10 +214,23 @@ export class ProtocolAppView {
     );
     return {
       cursors,
+      ...(this.lastStreamSeq === undefined ? {} : { streamSeq: this.lastStreamSeq }),
+      repoRevs: Object.fromEntries(
+        [...this.repoRevsByDid.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ),
       recordCount: this.records.size,
       quarantinedCount: this.quarantine.length,
       projectionHash: this.projectionHash(),
     };
+  }
+
+  private advanceCursor(did: string, streamSeq: number, repoRev?: string): void {
+    const previous = this.cursorsByDid.get(did) ?? 0;
+    if (streamSeq > previous) this.cursorsByDid.set(did, streamSeq);
+    if (repoRev !== undefined) this.repoRevsByDid.set(did, repoRev);
+    if (this.lastStreamSeq === undefined || streamSeq > this.lastStreamSeq) {
+      this.lastStreamSeq = streamSeq;
+    }
   }
 
   projectionHash(): string {
