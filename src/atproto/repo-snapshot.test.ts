@@ -5,13 +5,30 @@ import {
   AtprotoRepoSnapshotAdapter,
   decodeProtocolRepoSnapshot,
 } from './repo-snapshot.js';
+import type { RepositoryCommitVerifier } from './repository-auth.js';
 
 const did = 'did:plc:myceliumfixture';
 const car = await readFile(new URL('./minimal-repo.car', import.meta.url));
+const fixtureCommitVerifier: RepositoryCommitVerifier = {
+  async verifySnapshot(_carBytes, expectedDid) {
+    return {
+      did: expectedDid,
+      commitCid: 'fixture-root',
+      repoRev: 'fixture-rev',
+    };
+  },
+  async verifyLiveCommit(input) {
+    return {
+      did: input.did,
+      commitCid: input.commitCid,
+      repoRev: input.repoRev,
+    };
+  },
+};
 
 describe('official AT Protocol repository snapshots', () => {
   it('decodes a getRepo CAR, preserving repo identity, record paths, CIDs, and repo revision', async () => {
-    const snapshot = await decodeProtocolRepoSnapshot(car, did);
+    const snapshot = await decodeProtocolRepoSnapshot(car, did, fixtureCommitVerifier);
 
     expect(snapshot.did).toBe(did);
     expect(snapshot.repoRev).toBe('3jzfcijyqzs2a');
@@ -28,7 +45,7 @@ describe('official AT Protocol repository snapshots', () => {
   });
 
   it('quarantines unsupported, malformed, and forged records', async () => {
-    const snapshot = await decodeProtocolRepoSnapshot(car, did);
+    const snapshot = await decodeProtocolRepoSnapshot(car, did, fixtureCommitVerifier);
 
     expect(snapshot.quarantined).toHaveLength(3);
     expect(snapshot.quarantined.map(({ reason }) => reason)).toEqual([
@@ -44,7 +61,7 @@ describe('official AT Protocol repository snapshots', () => {
   });
 
   it('populates the ProtocolAppView with a deterministic projection and hash', async () => {
-    const snapshot = await decodeProtocolRepoSnapshot(car, did);
+    const snapshot = await decodeProtocolRepoSnapshot(car, did, fixtureCommitVerifier);
     const appView = new ProtocolAppView();
 
     appView.ingestSnapshot(snapshot.records, {
@@ -74,6 +91,7 @@ describe('official AT Protocol repository snapshots', () => {
     const adapter = new AtprotoRepoSnapshotAdapter({
       endpoint: 'https://pds.example/',
       did,
+      commitVerifier: fixtureCommitVerifier,
       fetchImpl: async (input, init) => {
         requestedUrl = String(input);
         requestedHeaders = new Headers(init?.headers);

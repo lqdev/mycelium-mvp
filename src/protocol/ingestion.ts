@@ -279,8 +279,9 @@ export class ProtocolIngestor {
     if (eventSeq !== undefined && this.streamSeq !== undefined && eventSeq < this.streamSeq) {
       return;
     }
-    this.appView.ingest(event);
-    if (eventSeq !== undefined && (this.streamSeq === undefined || eventSeq > this.streamSeq)) {
+    const applied = this.appView.ingest(event);
+    if (applied && eventSeq !== undefined &&
+      (this.streamSeq === undefined || eventSeq > this.streamSeq)) {
       this.streamSeq = eventSeq;
       await this.cursors.save(eventSeq);
     }

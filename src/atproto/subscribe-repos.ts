@@ -10,6 +10,7 @@ import type {
   AuthoritativeRecoveryProvider,
   ProtocolRepoSnapshot,
 } from './repo-snapshot.js';
+import type { RepositoryCommitVerifier } from './repository-auth.js';
 
 export interface SubscribeReposSocket {
   readonly readyState?: number;
@@ -26,6 +27,7 @@ export interface SubscribeReposSocketEvent {
 export interface SubscribeReposSourceOptions {
   endpoint: string;
   snapshot: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
+  commitVerifier: RepositoryCommitVerifier;
   authoritativeRecovery?: AuthoritativeRecoveryProvider;
   websocketFactory?: (url: string) => SubscribeReposSocket;
 }
@@ -46,6 +48,8 @@ export interface SubscribeReposCommit {
   since: string | null;
   tooBig: boolean;
   rebase: boolean;
+  /** Official subscribeRepos CAR slice containing the signed commit root. */
+  carBytes: Uint8Array;
   operations: ReadonlyArray<SubscribeReposOperation>;
 }
 
@@ -84,12 +88,14 @@ export async function decodeSubscribeReposFrame(raw: Uint8Array): Promise<Subscr
 export class AtprotoSubscribeReposSource implements PdsEventSource {
   private readonly endpoint: string;
   private readonly snapshotAdapter: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
+  private readonly commitVerifier: RepositoryCommitVerifier;
   private readonly websocketFactory: (url: string) => SubscribeReposSocket;
   readonly authoritativeRecovery: AuthoritativeRecoveryProvider | undefined;
 
   constructor(options: SubscribeReposSourceOptions) {
     this.endpoint = toSubscribeReposEndpoint(options.endpoint);
     this.snapshotAdapter = options.snapshot;
+    this.commitVerifier = options.commitVerifier;
     this.authoritativeRecovery = options.authoritativeRecovery;
     this.websocketFactory = options.websocketFactory ?? ((url) => new WebSocket(url));
   }
@@ -236,6 +242,7 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
       }
 
       if (commit.operations.length === 0) {
+        await this.verifyCommit(commit);
         await onEvent({
           streamSeq: commit.streamSeq,
           did: commit.repo,
@@ -250,6 +257,7 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
         return;
       }
 
+      await this.verifyCommit(commit);
       for (const operation of commit.operations) {
         const event: ProtocolCommitEvent = {
           streamSeq: commit.streamSeq,
@@ -270,9 +278,20 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
       onDiagnostic?.({
         kind: 'frame',
         frameType: 'unknown',
-        message: `subscribeRepos frame decode failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `subscribeRepos frame handling failed: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
+  }
+
+  private async verifyCommit(commit: SubscribeReposCommit): Promise<void> {
+    await this.commitVerifier.verifyLiveCommit({
+      streamSeq: commit.streamSeq,
+      did: commit.repo,
+      commitCid: commit.commitCid,
+      repoRev: commit.repoRev,
+      carBytes: commit.carBytes,
+      operations: commit.operations,
+    });
   }
 }
 
@@ -291,7 +310,17 @@ async function decodeCommit(value: unknown): Promise<SubscribeReposCommit> {
   if (!Array.isArray(rawOps)) throw new Error('subscribeRepos #commit ops is not an array');
 
   if (tooBig || rebase) {
-    return { streamSeq, repo, commitCid, repoRev, since, tooBig, rebase, operations: [] };
+    return {
+      streamSeq,
+      repo,
+      commitCid,
+      repoRev,
+      since,
+      tooBig,
+      rebase,
+      carBytes: blocks,
+      operations: [],
+    };
   }
 
   const car = await readCar(blocks);
@@ -317,7 +346,17 @@ async function decodeCommit(value: unknown): Promise<SubscribeReposCommit> {
     operations.push({ action, collection, rkey, cid, record: decodeCbor(block.bytes) });
   }
 
-  return { streamSeq, repo, commitCid, repoRev, since, tooBig, rebase, operations };
+  return {
+    streamSeq,
+    repo,
+    commitCid,
+    repoRev,
+    since,
+    tooBig,
+    rebase,
+    carBytes: blocks,
+    operations,
+  };
 }
 
 function parsePath(path: string): [string, string] {

@@ -14,8 +14,17 @@ import {
   decodeSubscribeReposFrame,
   type SubscribeReposSocket,
 } from './subscribe-repos.js';
+import type { RepositoryCommitVerifier } from './repository-auth.js';
 
 const did = 'did:plc:subscribe-repos-fixture';
+const fixtureCommitVerifier: RepositoryCommitVerifier = {
+  async verifySnapshot(_carBytes, expectedDid) {
+    return { did: expectedDid, commitCid: 'fixture-root', repoRev: 'fixture-rev' };
+  },
+  async verifyLiveCommit(input) {
+    return { did: input.did, commitCid: input.commitCid, repoRev: input.repoRev };
+  },
+};
 
 class FixtureSocket implements SubscribeReposSocket {
   readonly readyState = 0;
@@ -203,6 +212,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     const source = new AtprotoSubscribeReposSource({
       endpoint: 'https://pds.example',
       snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      commitVerifier: fixtureCommitVerifier,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));
@@ -229,11 +239,56 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     await unsubscribe();
   });
 
+  it('rejects an unauthenticated live commit before AppView or cursor mutation', async () => {
+    let socket!: FixtureSocket;
+    const source = new AtprotoSubscribeReposSource({
+      endpoint: 'https://pds.example',
+      snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      commitVerifier: {
+        async verifySnapshot(_carBytes, expectedDid) {
+          return { did: expectedDid, commitCid: 'fixture-root', repoRev: 'fixture-rev' };
+        },
+        async verifyLiveCommit() {
+          throw new Error('commit authenticity unavailable');
+        },
+      },
+      websocketFactory: () => {
+        socket = new FixtureSocket();
+        queueMicrotask(() => socket.emit('open'));
+        return socket;
+      },
+    });
+    const appView = new ProtocolAppView();
+    const cursor = new MemoryCursorStore();
+    const ingestor = new ProtocolIngestor(source, appView, cursor);
+    await ingestor.start();
+    const before = appView.health();
+
+    socket.emit('message', await makeCommitFrame({
+      seq: 7,
+      action: 'create',
+      path: `${COLLECTIONS.taskOffer}/task-1`,
+      record: {
+        $type: COLLECTIONS.taskOffer,
+        taskId: 'task-1',
+        title: 'Must not be projected',
+      },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(appView.health()).toEqual(before);
+    await expect(cursor.load()).resolves.toBeUndefined();
+    expect(ingestor.status().diagnostics.some(({ message }) =>
+      message.includes('commit authenticity unavailable'))).toBe(true);
+    await ingestor.stop();
+  });
+
   it('does not infer a snapshot stream boundary from observed live frames', async () => {
     let socket!: FixtureSocket;
     const source = new AtprotoSubscribeReposSource({
       endpoint: 'https://pds.example',
       snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      commitVerifier: fixtureCommitVerifier,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));
@@ -268,6 +323,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     const source = new AtprotoSubscribeReposSource({
       endpoint: 'https://pds.example',
       snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      commitVerifier: fixtureCommitVerifier,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));
@@ -292,6 +348,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     const source = new AtprotoSubscribeReposSource({
       endpoint: 'https://pds.example',
       snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      commitVerifier: fixtureCommitVerifier,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('close'));
@@ -354,6 +411,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
           return initialSnapshot;
         },
       },
+      commitVerifier: fixtureCommitVerifier,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));
@@ -431,6 +489,7 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
           return first;
         },
       },
+      commitVerifier: fixtureCommitVerifier,
       authoritativeRecovery: {
         async recover() {
           return recovered;

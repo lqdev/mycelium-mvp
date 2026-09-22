@@ -60,9 +60,34 @@ service with an auditable consistency proof, wired through
 supports initial getRepo loading and live subscription only; it must stop
 instead of attempting unsafe gap recovery.
 
-Commit signature verification against resolved DID keys is intentionally
-deferred to a separate follow-up; this slice does not claim public federation
-readiness.
+Repository commit authenticity is a mandatory boundary before either snapshot
+or live data can reach the AppView. `AtprotoRepositoryCommitVerifier` uses the
+official `@atproto/repo` and `@atproto/crypto` primitives rather than
+reimplementing DAG-CBOR signing:
+
+- snapshot CARs use `verifyRepo` with the expected repository DID and an
+  authorized signing key, validating the signed root and complete MST;
+- subscribeRepos CAR slices verify the CAR root/commit CID, repository DID,
+  commit revision, signature, and each operation's post-commit MST path/CID
+  claim. They do not claim full diff/ancestry verification because a live CAR
+  may be only a proof slice and this AppView does not yet retain a prior
+  `ReadableRepo` for every stream.
+
+The verifier receives a typed, injected `DidDocumentResolver` and
+`RepositoryVerificationKeyResolver`. The default key resolver accepts only an
+explicitly authorized `#atproto` `Multikey` whose document id and controller
+match a `did:plc` or `did:web` repository DID. It converts the Multikey through
+the installed AT Protocol crypto package; it never derives or trusts a
+`did:key` fallback for a PLC/web repository. Deployments must provide the DID
+resolution service, cache/freshness policy, and any key-rotation overlap policy.
+Tests must inject deterministic resolvers/verifiers; network resolution is not
+part of the ingestion code.
+
+Both ingestion adapters require a commit verifier. Authentication failure,
+malformed CAR/commit, and unsupported key material are fail-closed before the
+AppView callback, preserving projection state and the durable cursor. Record
+lexicon validation remains a separate concern and is not treated as commit
+authenticity.
 
 The live demo uses one small Linux VM with Caddy/TLS, the official Bluesky PDS,
 a private PLC directory backed by PostgreSQL, and the TypeScript AppView/API.

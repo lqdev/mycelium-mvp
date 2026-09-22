@@ -2,7 +2,7 @@
 
 A **federated AI agent orchestration system** built on AT Protocol primitives — agents with self-sovereign identity, capability discovery, decentralised task coordination, and portable reputation.
 
-> **Status:** MVP plus the first Protocol 0.1 contract — 539 tests covering legacy behavior, facts, permissions, snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
+> **Status:** MVP plus the first Protocol 0.1 contract — 562 tests covering legacy behavior, facts, permissions, authenticated snapshot/live ingestion, and AppView projections · persistent identities · AT Protocol PDS bridge · Jetstream federation · knowledge + tool providers · composable multi-attestor trust · proof-chain dashboard
 
 ---
 
@@ -258,9 +258,28 @@ with proof verification. Until that service exists, initial getRepo loading and
 live ingestion are supported, but gap/`tooBig` recovery is intentionally
 unavailable.
 
-Commit signature verification against resolved DID keys is deliberately
-deferred to a separate follow-up. This slice therefore does not claim public
-federation readiness.
+Repository authenticity is a separate trust boundary from Protocol 0.1 record
+validation. `AtprotoRepositoryCommitVerifier` in
+`src/atproto/repository-auth.ts` uses the installed official
+`@atproto/repo`/`@atproto/crypto` primitives: snapshots require complete
+`verifyRepo` validation, while live CAR slices verify the signed commit root
+and each operation's post-commit MST CID claim. Both paths require an injected
+`DidDocumentResolver` and an authorized `#atproto` `Multikey` resolver. The
+resolver must validate that the DID document `id` and key controller equal the
+repository DID, and it must account for key rotation according to the
+deployment's freshness/overlap policy. Only `did:plc` and `did:web` repositories
+are accepted; there is no implicit `did:key` fallback for PLC/web repos.
+
+`AtprotoRepoSnapshotAdapter` and `AtprotoSubscribeReposSource` require a
+`RepositoryCommitVerifier`; an omitted verifier is a hard error. A rejected or
+malformed commit is diagnosed before the AppView callback, so projection state
+and the durable stream cursor remain unchanged. The live CAR is commonly a
+proof slice rather than a complete repository, so this milestone does not
+claim full diff/ancestry verification without a retained prior verified repo.
+Deployments must provide the DID resolver/key-rotation policy and wire it into
+the verifier; network resolution is intentionally not hard-coded into tests.
+Existing ordinary protocol fixtures are usable only through explicit test
+doubles.
 
 ### Intelligence Providers
 
@@ -395,8 +414,9 @@ Full design rationale, schemas, and implementation notes in [`docs/PRD/`](./docs
 
 ## What's Next
 
-- **Commit authenticity** — Verify commit signatures against resolved DID keys
-  before making a public federation-readiness claim.
+- **Production trust wiring** — Provide an auditable DID resolver/key-rotation
+  service and the authoritative snapshot/checkpoint provider before making a
+  public federation-readiness claim.
 - **Hosted demo** — Run the official PDS and TypeScript AppView on one small
   VM, persist PDS data and cursor state, and verify a disposable AppView rebuild
   before publishing the demo URL. Keep the private PLC endpoint configurable;

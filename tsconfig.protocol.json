@@ -9,6 +9,7 @@
     "src/protocol/**/*.ts",
     "src/atproto/repo-snapshot.ts",
     "src/atproto/subscribe-repos.ts",
+    "src/atproto/repository-auth.ts",
     "src/errors.ts",
     "src/identity/index.ts",
     "src/schemas/types.ts"

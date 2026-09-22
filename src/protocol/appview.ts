@@ -150,16 +150,16 @@ export class ProtocolAppView {
     if (!isMyceliumCollection(event.collection)) return false;
     const eventId = `${event.did}:${streamSeq}:${event.operation}:${event.collection}:${event.rkey}`;
     if (this.processedEvents.has(eventId)) return false;
-    this.processedEvents.add(eventId);
 
     const previous = this.cursorsByDid.get(event.did) ?? 0;
     if (streamSeq < previous) return false;
-    this.advanceCursor(event.did, streamSeq, event.repoRev);
 
     const uri = uriFor(event);
     if (event.operation === 'delete') {
+      this.processedEvents.add(eventId);
       this.records.delete(uri);
       this.deleted.add(uri);
+      this.advanceCursor(event.did, streamSeq, event.repoRev);
       return true;
     }
     if (event.record === undefined) {
@@ -178,6 +178,8 @@ export class ProtocolAppView {
         record,
       });
       this.deleted.delete(uri);
+      this.processedEvents.add(eventId);
+      this.advanceCursor(event.did, streamSeq, event.repoRev);
       return true;
     } catch (error) {
       this.quarantine.push({
