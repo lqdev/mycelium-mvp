@@ -43,7 +43,10 @@ services:
       - PDS_PORT=2583
       - PDS_DATA_DIRECTORY=/pds
       - PDS_BLOBSTORE_DISK_LOCATION=/pds/blobs
-      - PDS_DID_PLC_URL=https://plc.directory
+      # Use https://plc.directory for the public sandbox. A private PLC can be
+      # supplied without changing the PDS image or application:
+      # PDS_DID_PLC_URL=https://plc.example.test
+      - PDS_DID_PLC_URL=${PDS_DID_PLC_URL:-https://plc.directory}
       - PDS_BSKY_APP_VIEW_URL=
       - PDS_CRAWLERS=
       - PDS_INVITE_REQUIRED=0
@@ -76,4 +79,3 @@ services:
 volumes:
   mycelium-data:
   pds-data:
-

@@ -18,6 +18,8 @@ import { ImportVerificationError, RecordNotFoundError } from '../errors.js';
 import { publish } from '../firehose/index.js';
 import { validateRecord } from '../schemas/index.js';
 import { persistRecord, persistDeleteRecord } from '../storage/persistence.js';
+import { isMyceliumCollection } from '../protocol/constants.js';
+import { validateProtocolRecord } from '../protocol/validation.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +99,11 @@ export function putRecord(
   const uri = `at://${repo.did}/${collection}/${rkey}`;
   const now = new Date().toISOString();
 
-  validateRecord(collection, content);
+  if (isMyceliumCollection(collection)) {
+    validateProtocolRecord(collection, content, repo.did);
+  } else {
+    validateRecord(collection, content);
+  }
 
   const { sig } = signContent(repo.identity, content);
   const contentJson = JSON.stringify(content);
@@ -121,15 +127,16 @@ export function putRecord(
   }
 
   const seq = ++repo.store.seq;
-  repo.store.commits.push({
+  const commit: CommitRow = {
     seq, operation, record_uri: uri,
     content_hash: contentHash, repo_root_hash: repoRootHash, timestamp: now,
-  });
+  };
+  repo.store.commits.push(commit);
 
   emitFirehoseEvent(repo, operation, collection, rkey, content);
 
   // Async write-through to DuckDB (fire-and-forget, never blocks simulation)
-  persistRecord(repo.did, repo.store.records.get(key)!, repo.store.commits[repo.store.commits.length - 1]);
+  persistRecord(repo.did, repo.store.records.get(key)!, commit);
 
   return { uri, cid: contentHash, commit: { seq, operation, repoRootHash } };
 }
@@ -192,15 +199,16 @@ export function deleteRecord(repo: AgentRepository, collection: string, rkey: st
   repo.store.records.delete(key);
 
   const seq = ++repo.store.seq;
-  repo.store.commits.push({
+  const commit: CommitRow = {
     seq, operation: 'delete', record_uri: row.uri,
     content_hash: contentHash, repo_root_hash: repoRootHash, timestamp: now,
-  });
+  };
+  repo.store.commits.push(commit);
 
   emitFirehoseEvent(repo, 'delete', collection, rkey, null);
 
   // Async write-through to DuckDB (fire-and-forget, never blocks simulation)
-  persistDeleteRecord(repo.did, collection, rkey, repo.store.commits[repo.store.commits.length - 1]);
+  persistDeleteRecord(repo.did, collection, rkey, commit);
 }
 
 /** Return the full commit log in sequence order. */

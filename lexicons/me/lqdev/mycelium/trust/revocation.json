@@ -1,0 +1,20 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.trust.revocation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["attestationUri", "revokerDid", "reason", "createdAt"],
+        "properties": {
+          "attestationUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "revokerDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "reason": { "type": "string", "maxLength": 10000 },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

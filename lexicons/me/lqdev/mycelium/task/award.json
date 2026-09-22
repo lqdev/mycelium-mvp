@@ -1,0 +1,24 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.task.award",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskUri", "claimUri", "workerDid", "requesterDid", "createdAt"],
+        "properties": {
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "claimUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "workerDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "requesterDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "coordinatorDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "delegationUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "createdAt": { "type": "string", "format": "datetime" },
+          "expiresAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

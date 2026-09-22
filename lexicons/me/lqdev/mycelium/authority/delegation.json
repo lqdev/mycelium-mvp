@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.authority.delegation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["delegatorDid", "delegateDid", "scopes", "createdAt", "expiresAt"],
+        "properties": {
+          "delegatorDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "delegateDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "scopes": { "type": "array", "items": { "type": "string", "maxLength": 256 }, "maxLength": 32 },
+          "createdAt": { "type": "string", "format": "datetime" },
+          "expiresAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

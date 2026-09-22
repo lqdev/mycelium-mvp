@@ -1,0 +1,14 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.auth.coordinator",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Mycelium coordinator",
+      "detail": "Create recommendations and delegated awards; requester delegation remains authoritative.",
+      "permissions": [
+        { "type": "permission", "resource": "repo", "action": ["create"], "collection": ["me.lqdev.mycelium.task.recommendation", "me.lqdev.mycelium.task.award"] }
+      ]
+    }
+  }
+}

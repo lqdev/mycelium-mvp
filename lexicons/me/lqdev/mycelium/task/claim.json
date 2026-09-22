@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.task.claim",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskUri", "workerDid", "proposal", "createdAt"],
+        "properties": {
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "workerDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "proposal": { "type": "string", "maxLength": 10000 },
+          "estimatedDuration": { "type": "string", "maxLength": 256 },
+          "createdAt": { "type": "string", "format": "datetime" },
+          "expiresAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

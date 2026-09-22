@@ -1,0 +1,23 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.verification.result",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskUri", "completionUri", "verifierDid", "status", "summary", "evidenceRefs", "createdAt"],
+        "properties": {
+          "taskUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "completionUri": { "type": "ref", "ref": "me.lqdev.mycelium.common#atUri" },
+          "verifierDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "status": { "type": "string", "knownValues": ["passed", "failed", "inconclusive"] },
+          "summary": { "type": "string", "maxLength": 10000 },
+          "evidenceRefs": { "type": "array", "items": { "type": "ref", "ref": "me.lqdev.mycelium.common#resourceRef" }, "maxLength": 128 },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

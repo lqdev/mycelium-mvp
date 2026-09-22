@@ -2,6 +2,14 @@
 
 > Companion to [README.md](./README.md). Defines the component architecture, data flows, and integration points for the E2E MVP.
 
+> **Protocol 0.1 boundary:** The current diagrams and `network.mycelium.*`
+> modules describe the legacy simulation. The authoritative next-generation
+> contract is documented in [ADR-006](../ADR/ADR-006-protocol-principals-and-authorship.md),
+> [ADR-007](../ADR/ADR-007-fact-graph-governance.md), and
+> [ADR-008](../ADR/ADR-008-rebuildable-appview-and-demo-topology.md). New
+> integrations must use `src/protocol/`, `me.lqdev.mycelium.*`, and PDS-authored
+> facts rather than extending the Mayor as a protocol authority.
+
 ---
 
 ## System Overview
@@ -35,7 +43,11 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-> **Note:** Intelligence Providers and Models (not shown above) are first-class entities with their own DIDs and repositories. Agents reference intelligence models via DID, and task completions attribute work to the intelligence that powered it. See §2.5.
+> **Legacy simulation note:** Intelligence Providers and Models (not shown above)
+> are modeled as first-class entities for the original demo. Protocol 0.1 treats
+> models, prompts, tools, documents, artifacts, and runs as addressable
+> resources (AT URIs/CIDs) unless an operator explicitly promotes a long-lived
+> service to a principal. See ADR-006.
 
 ---
 
@@ -70,7 +82,10 @@ interface SignedRecord<T> {
 }
 ```
 
-**Note:** The same `AgentIdentity` structure is used for intelligence providers and models — all entities in Mycelium have DIDs and can sign records. The term "agent" in `AgentIdentity` is generic; providers and models use the same identity mechanism.
+**Legacy simulation note:** The original demo reuses `AgentIdentity` for
+intelligence providers and models. That convenience is not part of the
+Protocol 0.1 authorship model; only a principal that authorizes actions needs a
+repository DID.
 
 **MVP Simplification:** Uses `did:key` (self-describing, no resolution infrastructure needed) instead of `did:plc` (requires PLC directory server). Upgrade path: swap key generation for PLC registration.
 
@@ -312,14 +327,16 @@ Output: Commit record
 
 ---
 
-### 2.5 Intelligence Module (`src/intelligence/`)
+### 2.5 Intelligence Module (`src/intelligence/`) — legacy simulation
 
-Manages intelligence provider and model identities. Providers and models are first-class entities with their own DIDs, enabling verifiable attribution of AI-powered work.
+The original demo models providers and models as discoverable entities. This
+module remains useful for local simulation, but it is not the Protocol 0.1
+principal model.
 
 **Responsibilities:**
-- Generate DIDs for intelligence providers and models
+- Generate demo identities for intelligence providers and models
 - Store provider and model records in provider-owned repositories
-- Enable agents to reference intelligences by DID (not hard-coded strings)
+- Enable demo agents to reference intelligences by DID (not hard-coded strings)
 - Support intelligence discovery (find models by capability/domain)
 
 **Key Types (abbreviated — [SCHEMAS.md](./SCHEMAS.md) is authoritative for full field definitions including `$type`, `operator`, `trustSignals`, timestamps):**
@@ -343,11 +360,11 @@ interface IntelligenceModel {
 }
 ```
 
-**Design Rationale:**
-- Intelligence gets DIDs because the AT Protocol philosophy is "everything is addressable, everything has identity"
-- This enables: intelligence reputation tracking, trust chain verification (who did the work AND what powered it), agent-intelligence composition (one agent using multiple models)
-- Providers own model records — they attest to their models' capabilities
-- Agents reference models by DID in their profiles and task completions
+**Protocol 0.1 boundary:** A model or tool is addressable without being a
+principal. If a hosted model service needs to authorize or attest to an action,
+the service may have its own DID; the model invocation itself should normally
+be represented by an AT URI/CID or artifact manifest. This keeps resource
+addressability separate from authorization authority.
 
 **MVP Provider Strategy:**
 For prototyping, we use a **two-provider architecture**:

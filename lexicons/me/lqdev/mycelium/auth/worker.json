@@ -1,0 +1,14 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.auth.worker",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Mycelium worker",
+      "detail": "Create task claims, completions, and artifact manifests.",
+      "permissions": [
+        { "type": "permission", "resource": "repo", "action": ["create"], "collection": ["me.lqdev.mycelium.task.claim", "me.lqdev.mycelium.task.completion", "me.lqdev.mycelium.artifact.manifest"] }
+      ]
+    }
+  }
+}

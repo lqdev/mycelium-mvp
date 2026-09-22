@@ -33,7 +33,10 @@ export function subscribe(
   handler: FirehoseSubscription['handler'],
 ): string {
   const id = randomUUID();
-  firehose.subscriptions.set(id, { id, filter, handler });
+  firehose.subscriptions.set(
+    id,
+    filter === undefined ? { id, handler } : { id, filter, handler },
+  );
   return id;
 }
 

@@ -23,7 +23,9 @@ Phase 7: E2E Demo & Dashboard           █████████████�
 
 **Goal:** Set up the TypeScript project with tooling.
 
-**Node.js:** Requires **Node.js 20 LTS** or higher. (`node --version` should show `v20.x.x` or later.)
+**Node.js:** Requires **Node.js 22.13+** for the Protocol 0.1 Lexicon toolchain.
+The existing simulation remains compatible with Node 20 where its dependencies
+permit it, but new protocol work is validated on Node 22.
 
 **Tasks:**
 1. Initialize Node.js project with TypeScript
@@ -47,6 +49,7 @@ Phase 7: E2E Demo & Dashboard           █████████████�
 ```
 mycelium-mvp/
 ├── src/
+│   ├── protocol/                 # Protocol 0.1 facts, permissions, AppView, generated Lexicons
 │   ├── identity/
 │   │   ├── index.ts                # generateIdentity, signRecord, verifySignature, didToKeyFragment
 │   │   └── identity.test.ts
@@ -86,7 +89,8 @@ mycelium-mvp/
 │       │   │   └── app.js          # Dashboard logic (vanilla JS + SSE)
 │       │   └── api.ts              # REST API endpoints for dashboard
 │       └── demo.test.ts
-├── data/                           # SQLite databases (gitignored)
+├── lexicons/me/lqdev/mycelium/    # Versioned Protocol 0.1 Lexicon and permission-set inputs
+├── data/                           # DuckDB projection data (gitignored)
 ├── docs/
 │   └── PRD/
 ├── package.json

@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "me.lqdev.mycelium.task.offer",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["taskId", "title", "description", "requiredCapabilities", "contextRefs", "deliverables", "requesterDid", "governance", "createdAt"],
+        "properties": {
+          "taskId": { "type": "string", "maxLength": 256 },
+          "title": { "type": "string", "maxLength": 512 },
+          "description": { "type": "string", "maxLength": 10000 },
+          "requiredCapabilities": { "type": "array", "items": { "type": "string", "maxLength": 256 }, "maxLength": 64 },
+          "contextRefs": { "type": "array", "items": { "type": "ref", "ref": "me.lqdev.mycelium.common#resourceRef" }, "maxLength": 128 },
+          "deliverables": { "type": "array", "items": { "type": "string", "maxLength": 512 }, "maxLength": 64 },
+          "requesterDid": { "type": "ref", "ref": "me.lqdev.mycelium.common#did" },
+          "governance": { "type": "ref", "ref": "me.lqdev.mycelium.common#governance" },
+          "expiresAt": { "type": "string", "format": "datetime" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}
