@@ -43,6 +43,12 @@ export interface QuarantinedEvent {
   reason: string;
 }
 
+export interface ProtocolSnapshotMetadata {
+  did: string;
+  repoRev: string;
+  streamSeq?: number | undefined;
+}
+
 export interface AppViewHealth {
   cursors: Readonly<Record<string, number>>;
   streamSeq?: number | undefined;
@@ -83,8 +89,12 @@ export class ProtocolAppView {
     this.quarantine.length = 0;
   }
 
-  ingestSnapshot(snapshot: ReadonlyArray<ProtocolRecordEnvelope>, streamSeq?: number): void {
-    if (streamSeq !== undefined) this.lastStreamSeq = streamSeq;
+  ingestSnapshot(
+    snapshot: ReadonlyArray<ProtocolRecordEnvelope>,
+    metadata?: ProtocolSnapshotMetadata,
+  ): void {
+    if (metadata?.streamSeq !== undefined) this.lastStreamSeq = metadata.streamSeq;
+    if (metadata !== undefined) this.repoRevsByDid.set(metadata.did, metadata.repoRev);
     const ordered = [...snapshot].sort((a, b) => a.uri.localeCompare(b.uri));
     for (const envelope of ordered) {
       const expectedUri = canonicalUri(envelope.did, envelope.collection, envelope.rkey);
@@ -204,7 +214,7 @@ export class ProtocolAppView {
     );
     return {
       cursors,
-      streamSeq: this.lastStreamSeq,
+      ...(this.lastStreamSeq === undefined ? {} : { streamSeq: this.lastStreamSeq }),
       repoRevs: Object.fromEntries(
         [...this.repoRevsByDid.entries()].sort(([a], [b]) => a.localeCompare(b)),
       ),

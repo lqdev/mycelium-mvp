@@ -22,6 +22,7 @@ export interface SubscribeReposSocketEvent {
 export interface SubscribeReposSourceOptions {
   endpoint: string;
   snapshot: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
+  recover?: (reason: string) => Promise<ProtocolRepoSnapshot & { streamSeq: number }>;
   websocketFactory?: (url: string) => SubscribeReposSocket;
 }
 
@@ -79,25 +80,28 @@ export async function decodeSubscribeReposFrame(raw: Uint8Array): Promise<Subscr
 export class AtprotoSubscribeReposSource implements PdsEventSource {
   private readonly endpoint: string;
   private readonly snapshotAdapter: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
+  private readonly recoverySource:
+    ((reason: string) => Promise<ProtocolRepoSnapshot & { streamSeq: number }>) | undefined;
   private readonly websocketFactory: (url: string) => SubscribeReposSocket;
-  private lastObservedStreamSeq: number | undefined;
 
   constructor(options: SubscribeReposSourceOptions) {
     this.endpoint = toSubscribeReposEndpoint(options.endpoint);
     this.snapshotAdapter = options.snapshot;
+    this.recoverySource = options.recover;
     this.websocketFactory = options.websocketFactory ?? ((url) => new WebSocket(url));
   }
 
   async snapshot(): Promise<ProtocolRepoSnapshot> {
-    const boundary = this.lastObservedStreamSeq;
-    const snapshot = await this.snapshotAdapter.snapshotWithMetadata();
-    return boundary === undefined
-      ? snapshot
-      : { ...snapshot, streamSeq: boundary };
+    return this.snapshotAdapter.snapshotWithMetadata();
   }
 
-  async recover(): Promise<ProtocolRepoSnapshot> {
-    return this.snapshot();
+  async recover(reason: string): Promise<ProtocolRepoSnapshot & { streamSeq: number }> {
+    if (this.recoverySource === undefined) {
+      throw new Error(
+        `subscribeRepos recovery is unavailable for "${reason}": getRepo has no authoritative streamSeq`,
+      );
+    }
+    return this.recoverySource(reason);
   }
 
   async subscribe(
@@ -109,7 +113,9 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     if (streamSeq !== undefined) url.searchParams.set('cursor', String(streamSeq));
     const socket = this.websocketFactory(url.toString());
     let messageChain: Promise<void> = Promise.resolve();
-    let settled = false;
+    let openSettled = false;
+    let hasOpened = false;
+    let intentionallyClosed = false;
     let resolveOpen!: () => void;
     let rejectOpen!: (error: Error) => void;
     const opened = new Promise<void>((resolve, reject) => {
@@ -118,31 +124,72 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     });
 
     socket.addEventListener('open', () => {
-      if (!settled) {
-        settled = true;
+      hasOpened = true;
+      if (!openSettled) {
+        openSettled = true;
         resolveOpen();
       }
     });
     socket.addEventListener('error', (event) => {
-      if (!settled) {
-        settled = true;
+      if (!hasOpened && !openSettled) {
+        openSettled = true;
         rejectOpen(new Error(`subscribeRepos WebSocket error: ${event.reason ?? 'unknown error'}`));
+        return;
+      }
+      if (!intentionallyClosed) {
+        onDiagnostic?.({
+          kind: 'recovery',
+          frameType: '#connection',
+          message: `subscribeRepos WebSocket error: ${event.reason ?? 'unknown error'}`,
+        });
       }
     });
     socket.addEventListener('close', (event) => {
-      if (!settled) {
-        settled = true;
+      if (!hasOpened && !openSettled) {
+        openSettled = true;
         rejectOpen(new Error(`subscribeRepos WebSocket closed (${event.code ?? 1000})`));
+        return;
+      }
+      if (!intentionallyClosed) {
+        onDiagnostic?.({
+          kind: 'recovery',
+          frameType: '#connection',
+          message: `subscribeRepos WebSocket closed (${event.code ?? 1000})${event.reason ? `: ${event.reason}` : ''}`,
+        });
       }
     });
     socket.addEventListener('message', (event) => {
-      messageChain = messageChain.then(() =>
-        this.handleMessage(event.data, onEvent, onDiagnostic));
+      messageChain = messageChain
+        .then(() => this.handleMessage(event.data, onEvent, onDiagnostic))
+        .catch((error: unknown) => {
+          onDiagnostic?.({
+            kind: 'frame',
+            frameType: 'unknown',
+            message: `subscribeRepos frame handling failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
     });
 
-    if (socket.readyState === 1) resolveOpen();
-    await opened;
-    return async () => socket.close();
+    if (socket.readyState === 1) {
+      hasOpened = true;
+      if (!openSettled) {
+        openSettled = true;
+        resolveOpen();
+      }
+    }
+    try {
+      await opened;
+    } catch (error) {
+      intentionallyClosed = true;
+      await messageChain;
+      socket.close();
+      throw error;
+    }
+    return async () => {
+      intentionallyClosed = true;
+      await messageChain;
+      socket.close();
+    };
   }
 
   private async handleMessage(
@@ -157,7 +204,6 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
         return;
       }
       const commit = frame.commit;
-      this.lastObservedStreamSeq = Math.max(this.lastObservedStreamSeq ?? 0, commit.streamSeq);
       if (commit.tooBig || commit.rebase) {
         onDiagnostic?.({
           kind: 'recovery',

@@ -234,8 +234,11 @@ operations while preserving the global `seq`, commit CID, repository `rev`,
 unknown frames become observable ingestion diagnostics. `ProtocolIngestor`
 persists one numeric `streamSeq` per subscription, buffers during snapshot
 load, deduplicates replay, and requires a fresh snapshot with an authoritative
-stream boundary after a gap or `tooBig` commit. Jetstream remains an optional
-legacy integration and is not a substitute for this direct cursor handoff.
+stream boundary after a gap or `tooBig` commit. A plain getRepo snapshot never
+supplies that boundary; recovery must be provided by a source that can return a
+snapshot paired with an authoritative global stream sequence. Jetstream remains
+an optional legacy integration and is not a substitute for this direct cursor
+handoff.
 
 Commit signature verification against resolved DID keys is deliberately
 deferred to a separate follow-up. This slice therefore does not claim public

@@ -2,6 +2,7 @@ import type { ProtocolAppView, ProtocolCommitEvent } from './appview.js';
 import type { DuckDBConnection } from '../storage/duckdb.js';
 import { execute, queryAll } from '../storage/duckdb.js';
 import type { ProtocolRepoSnapshot } from '../atproto/repo-snapshot.js';
+import type { ProtocolRecordEnvelope } from './types.js';
 
 export interface CursorStore {
   load(): Promise<number | Readonly<Record<string, number>> | undefined>;
@@ -16,13 +17,13 @@ export interface IngestionDiagnostic {
 }
 
 export interface PdsEventSource {
-  snapshot(): Promise<ProtocolRepoSnapshot | ReadonlyArray<import('./types.js').ProtocolRecordEnvelope>>;
+  snapshot(): Promise<ProtocolRepoSnapshot | ReadonlyArray<ProtocolRecordEnvelope>>;
   subscribe(
     streamSeq: number | undefined,
     onEvent: (event: ProtocolCommitEvent) => void | Promise<void>,
     onDiagnostic?: (diagnostic: IngestionDiagnostic) => void,
   ): Promise<() => Promise<void>>;
-  recover?(reason: string): Promise<ProtocolRepoSnapshot>;
+  recover?(reason: string): Promise<ProtocolRepoSnapshot & { streamSeq: number }>;
 }
 
 export interface IngestionStatus {
@@ -48,6 +49,8 @@ export class ProtocolIngestor {
   private handoffInProgress = false;
   private liveEventChain: Promise<void> = Promise.resolve();
   private streamSeq: number | undefined;
+  private connectionError: Error | undefined;
+  private snapshotBoundary: number | undefined;
 
   constructor(
     private readonly source: PdsEventSource,
@@ -67,11 +70,12 @@ export class ProtocolIngestor {
       recoveryRequired: false,
       diagnostics: this.diagnosticsValue,
     };
-    this.streamSeq = normaliseCursor(await this.cursors.load());
-
-    this.unsubscribe = await this.source.subscribe(
-      this.streamSeq,
-      (event) => {
+    this.connectionError = undefined;
+    try {
+      this.streamSeq = normaliseCursor(await this.cursors.load());
+      this.unsubscribe = await this.source.subscribe(
+        this.streamSeq,
+        (event) => {
         const eventSeq = event.streamSeq ?? event.seq;
         if (event.tooBig) {
           this.bufferedEvents.push(event);
@@ -86,8 +90,7 @@ export class ProtocolIngestor {
             recoveryRequired: true,
           };
           if (this.acceptingLiveEvents && !this.handoffInProgress) {
-            this.liveEventChain = this.liveEventChain.then(() =>
-              this.recover('live tooBig or rebase event'));
+            this.enqueueRecovery('live tooBig or rebase event');
             return this.liveEventChain;
           }
           return;
@@ -106,8 +109,7 @@ export class ProtocolIngestor {
             recoveryRequired: true,
           };
           if (this.acceptingLiveEvents && !this.handoffInProgress) {
-            this.liveEventChain = this.liveEventChain.then(() =>
-              this.recover('live firehose gap'));
+            this.enqueueRecovery('live firehose gap');
             return this.liveEventChain;
           }
           return;
@@ -126,37 +128,47 @@ export class ProtocolIngestor {
             if (this.statusValue.recoveryRequired) await this.recover('live gap or tooBig event');
           })
           .catch((error: unknown) => {
+            this.handleLiveChainError(error);
+          });
+        return this.liveEventChain;
+        },
+        (diagnostic) => {
+          this.recordDiagnostic(diagnostic);
+          if (diagnostic.frameType === '#connection') {
+            this.connectionError = new Error(diagnostic.message);
             this.acceptingLiveEvents = false;
+            this.handoffInProgress = false;
             this.statusValue = {
               ...this.statusValue,
               phase: 'stopped',
-              lastError: error instanceof Error ? error.message : String(error),
+              lastError: diagnostic.message,
             };
-          });
-        return this.liveEventChain;
-      },
-      (diagnostic) => this.recordDiagnostic(diagnostic),
-    );
-
-    try {
+          }
+        },
+      );
+      if (this.connectionError) throw this.connectionError;
       await this.applySnapshot(await this.source.snapshot());
+      if (this.connectionError) throw this.connectionError;
       this.statusValue = {
         ...this.statusValue,
         phase: 'replaying',
         bufferedEvents: this.bufferedEvents.length,
       };
       this.handoffInProgress = true;
-      while (this.bufferedEvents.length > 0) await this.replayBuffered();
+      while (this.bufferedEvents.length > 0 && !this.statusValue.recoveryRequired) {
+        await this.replayBuffered();
+      }
       if (this.statusValue.recoveryRequired) {
         await this.recover('buffered gap or tooBig event');
       }
+      if (this.connectionError) throw this.connectionError;
       this.acceptingLiveEvents = true;
       this.handoffInProgress = false;
       this.statusValue = {
         ...this.statusValue,
         phase: 'live',
         bufferedEvents: 0,
-        streamSeq: this.streamSeq,
+        ...(this.streamSeq === undefined ? {} : { streamSeq: this.streamSeq }),
         recoveryRequired: false,
       };
     } catch (error) {
@@ -166,7 +178,7 @@ export class ProtocolIngestor {
         ...this.statusValue,
         phase: 'stopped',
         bufferedEvents: this.bufferedEvents.length,
-        streamSeq: this.streamSeq,
+        ...(this.streamSeq === undefined ? {} : { streamSeq: this.streamSeq }),
         lastError: error instanceof Error ? error.message : String(error),
       };
       if (this.unsubscribe) await this.unsubscribe();
@@ -185,19 +197,37 @@ export class ProtocolIngestor {
       ...this.statusValue,
       phase: 'stopped',
       bufferedEvents: this.bufferedEvents.length,
-      streamSeq: this.streamSeq,
+      ...(this.streamSeq === undefined ? {} : { streamSeq: this.streamSeq }),
     };
   }
 
   private async applySnapshot(
-    snapshot: ProtocolRepoSnapshot | ReadonlyArray<import('./types.js').ProtocolRecordEnvelope>,
+    snapshot: ProtocolRepoSnapshot | ReadonlyArray<ProtocolRecordEnvelope>,
   ): Promise<void> {
-    this.appView.reset();
     if (isRecordArray(snapshot)) {
+      this.appView.reset();
+      this.snapshotBoundary = undefined;
       this.appView.ingestSnapshot(snapshot);
       return;
     }
-    this.appView.ingestSnapshot(snapshot.records, snapshot.streamSeq);
+    if (snapshot.streamSeq !== undefined &&
+      (!Number.isSafeInteger(snapshot.streamSeq) || snapshot.streamSeq < 0)) {
+      throw new Error('snapshot streamSeq must be a non-negative safe integer');
+    }
+    if (snapshot.streamSeq !== undefined &&
+      this.streamSeq !== undefined &&
+      snapshot.streamSeq < this.streamSeq) {
+      throw new Error(
+        `snapshot streamSeq ${snapshot.streamSeq} is behind current streamSeq ${this.streamSeq}`,
+      );
+    }
+    this.appView.reset();
+    this.snapshotBoundary = snapshot.streamSeq;
+    this.appView.ingestSnapshot(snapshot.records, {
+      did: snapshot.did,
+      repoRev: snapshot.repoRev,
+      ...(snapshot.streamSeq === undefined ? {} : { streamSeq: snapshot.streamSeq }),
+    });
     if (snapshot.streamSeq !== undefined) {
       this.streamSeq = snapshot.streamSeq;
       await this.cursors.save(snapshot.streamSeq);
@@ -209,13 +239,30 @@ export class ProtocolIngestor {
     events.sort((a, b) =>
       (a.event.streamSeq ?? a.event.seq ?? 0) - (b.event.streamSeq ?? b.event.seq ?? 0) ||
       a.index - b.index);
-    for (const { event } of events) {
+    for (const [eventIndex, { event }] of events.entries()) {
       const eventSeq = event.streamSeq ?? event.seq;
-      if (event.tooBig) {
-        this.statusValue = { ...this.statusValue, recoveryRequired: true };
+      const boundary = this.snapshotBoundary;
+      if (eventSeq !== undefined && boundary !== undefined && eventSeq <= boundary) {
         continue;
       }
-      if (eventSeq !== undefined && this.streamSeq !== undefined && eventSeq < this.streamSeq) {
+      if (eventSeq !== undefined && boundary === undefined &&
+        this.streamSeq !== undefined && eventSeq < this.streamSeq) {
+        continue;
+      }
+      if (eventSeq !== undefined && this.streamSeq !== undefined &&
+        eventSeq > this.streamSeq + 1) {
+        this.bufferedEvents.unshift(
+          ...events.slice(eventIndex).map(({ event: pending }) => pending),
+        );
+        this.statusValue = {
+          ...this.statusValue,
+          bufferedEvents: this.bufferedEvents.length,
+          recoveryRequired: true,
+        };
+        return;
+      }
+      if (event.tooBig) {
+        this.statusValue = { ...this.statusValue, recoveryRequired: true };
         continue;
       }
       await this.ingestLiveEvent(event);
@@ -232,7 +279,10 @@ export class ProtocolIngestor {
       this.streamSeq = eventSeq;
       await this.cursors.save(eventSeq);
     }
-    this.statusValue = { ...this.statusValue, streamSeq: this.streamSeq };
+    this.statusValue = {
+      ...this.statusValue,
+      ...(this.streamSeq === undefined ? {} : { streamSeq: this.streamSeq }),
+    };
   }
 
   private async recover(reason: string): Promise<void> {
@@ -242,21 +292,57 @@ export class ProtocolIngestor {
       phase: 'snapshot',
       recoveryRequired: true,
     };
-    const snapshot = this.source.recover
-      ? await this.source.recover(reason)
-      : await this.source.snapshot();
-    if (!isProtocolRepoSnapshot(snapshot) || snapshot.streamSeq === undefined) {
-      throw new Error('snapshot recovery requires an authoritative streamSeq boundary');
+    if (!this.source.recover) {
+      const error = new Error(
+        'snapshot recovery requires a source.recover implementation with an authoritative streamSeq boundary',
+      );
+      this.recordDiagnostic({ kind: 'recovery', message: error.message });
+      throw error;
     }
+    const snapshot = this.requireAuthoritativeRecoverySnapshot(await this.source.recover(reason));
     await this.applySnapshot(snapshot);
-    await this.replayBuffered();
     this.statusValue = {
       ...this.statusValue,
-      phase: 'replaying',
+      recoveryRequired: false,
+    };
+    while (true) {
+      await this.replayBuffered();
+      if (!this.statusValue.recoveryRequired && this.bufferedEvents.length === 0) break;
+      if (!this.statusValue.recoveryRequired) continue;
+      if (!this.source.recover) {
+        throw new Error('buffered recovery event requires an authoritative source.recover boundary');
+      }
+      const nextSnapshot = this.requireAuthoritativeRecoverySnapshot(
+        await this.source.recover(`${reason}; another gap or tooBig event`),
+      );
+      await this.applySnapshot(nextSnapshot);
+      this.statusValue = { ...this.statusValue, recoveryRequired: false };
+    }
+    this.statusValue = {
+      ...this.statusValue,
+      phase: this.acceptingLiveEvents ? 'live' : 'replaying',
       bufferedEvents: this.bufferedEvents.length,
       recoveryRequired: false,
     };
     if (this.acceptingLiveEvents) this.handoffInProgress = false;
+  }
+
+  private enqueueRecovery(reason: string): void {
+    this.liveEventChain = this.liveEventChain
+      .then(() => this.recover(reason))
+      .catch((error: unknown) => {
+        this.handleLiveChainError(error);
+      });
+  }
+
+  private handleLiveChainError(error: unknown): void {
+    this.acceptingLiveEvents = false;
+    this.handoffInProgress = false;
+    this.statusValue = {
+      ...this.statusValue,
+      phase: 'stopped',
+      lastError: error instanceof Error ? error.message : String(error),
+    };
   }
 
   private recordDiagnostic(diagnostic: IngestionDiagnostic): void {
@@ -265,6 +351,18 @@ export class ProtocolIngestor {
       ...this.statusValue,
       diagnostics: this.diagnosticsValue,
     };
+  }
+
+  private requireAuthoritativeRecoverySnapshot(snapshot: unknown): ProtocolRepoSnapshot {
+    if (!isProtocolRepoSnapshot(snapshot) ||
+      snapshot.streamSeq === undefined ||
+      !Number.isSafeInteger(snapshot.streamSeq) ||
+      snapshot.streamSeq < 0) {
+      const message = 'snapshot recovery requires an authoritative streamSeq boundary';
+      this.recordDiagnostic({ kind: 'recovery', message });
+      throw new Error(message);
+    }
+    return snapshot;
   }
 }
 
@@ -310,13 +408,13 @@ function normaliseCursor(
 }
 
 function isRecordArray(
-  value: ProtocolRepoSnapshot | ReadonlyArray<import('./types.js').ProtocolRecordEnvelope>,
-): value is ReadonlyArray<import('./types.js').ProtocolRecordEnvelope> {
+  value: unknown,
+): value is ReadonlyArray<ProtocolRecordEnvelope> {
   return Array.isArray(value);
 }
 
 function isProtocolRepoSnapshot(
-  value: ProtocolRepoSnapshot | ReadonlyArray<import('./types.js').ProtocolRecordEnvelope>,
+  value: unknown,
 ): value is ProtocolRepoSnapshot {
-  return !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -16,6 +16,7 @@ const did = 'did:plc:subscribe-repos-fixture';
 
 class FixtureSocket implements SubscribeReposSocket {
   readonly readyState = 0;
+  closeCalls = 0;
   private readonly listeners = new Map<string, Array<(event: { data?: unknown }) => void>>();
 
   addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
@@ -24,7 +25,9 @@ class FixtureSocket implements SubscribeReposSocket {
     this.listeners.set(type, existing);
   }
 
-  close(): void {}
+  close(): void {
+    this.closeCalls++;
+  }
 
   emit(type: string, data?: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) listener({ data });
@@ -209,6 +212,81 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
     await unsubscribe();
   });
 
+  it('does not infer a snapshot stream boundary from observed live frames', async () => {
+    let socket!: FixtureSocket;
+    const source = new AtprotoSubscribeReposSource({
+      endpoint: 'https://pds.example',
+      snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      websocketFactory: () => {
+        socket = new FixtureSocket();
+        queueMicrotask(() => socket.emit('open'));
+        return socket;
+      },
+    });
+    const diagnostics = [];
+    const unsubscribe = await source.subscribe(undefined, async () => {}, (diagnostic) => {
+      diagnostics.push(diagnostic);
+    });
+    socket.emit('message', await makeCommitFrame({
+      seq: 42,
+      action: 'delete',
+      path: `${COLLECTIONS.taskOffer}/task-1`,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const observedSnapshot = await source.snapshot();
+    expect(observedSnapshot.repoRev).toBe('snapshot-rev');
+    expect(observedSnapshot.streamSeq).toBeUndefined();
+    socket.emit('close', undefined);
+    expect(diagnostics).toEqual([{
+      kind: 'recovery',
+      frameType: '#connection',
+      message: 'subscribeRepos WebSocket closed (1000)',
+    }]);
+    await unsubscribe();
+  });
+
+  it('surfaces post-open WebSocket errors and suppresses intentional close diagnostics', async () => {
+    let socket!: FixtureSocket;
+    const diagnostics = [];
+    const source = new AtprotoSubscribeReposSource({
+      endpoint: 'https://pds.example',
+      snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      websocketFactory: () => {
+        socket = new FixtureSocket();
+        queueMicrotask(() => socket.emit('open'));
+        return socket;
+      },
+    });
+    const unsubscribe = await source.subscribe(undefined, async () => {}, (diagnostic) => {
+      diagnostics.push(diagnostic);
+    });
+    socket.emit('error', undefined);
+    expect(diagnostics).toEqual([{
+      kind: 'recovery',
+      frameType: '#connection',
+      message: 'subscribeRepos WebSocket error: unknown error',
+    }]);
+    await unsubscribe();
+    expect(diagnostics).toHaveLength(1);
+  });
+
+  it('closes the socket when the initial WebSocket open fails', async () => {
+    let socket!: FixtureSocket;
+    const source = new AtprotoSubscribeReposSource({
+      endpoint: 'https://pds.example',
+      snapshot: { async snapshotWithMetadata() { return snapshot([]); } },
+      websocketFactory: () => {
+        socket = new FixtureSocket();
+        queueMicrotask(() => socket.emit('close'));
+        return socket;
+      },
+    });
+
+    await expect(source.subscribe(undefined, async () => {}))
+      .rejects.toThrow('subscribeRepos WebSocket closed (1000)');
+    expect(socket.closeCalls).toBe(1);
+  });
+
   it('replays snapshot plus update/delete live events to the ordered rebuild hash', async () => {
     const initial = {
       $type: COLLECTIONS.taskOffer,
@@ -331,14 +409,12 @@ describe('official com.atproto.sync.subscribeRepos ingestion', () => {
       snapshot: {
         async snapshotWithMetadata() {
           calls++;
-          if (calls === 1) {
-            snapshotStarted();
-            await snapshotRelease;
-            return first;
-          }
-          return recovered;
+          snapshotStarted();
+          await snapshotRelease;
+          return first;
         },
       },
+      recover: async () => recovered,
       websocketFactory: () => {
         socket = new FixtureSocket();
         queueMicrotask(() => socket.emit('open'));

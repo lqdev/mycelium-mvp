@@ -40,7 +40,10 @@ buffers frames while getRepo loads, replays in stream order, and reports
 identity/account/handle/info/unknown frames as diagnostics. A sequence gap or
 `tooBig` commit triggers snapshot recovery and is not considered recovered
 unless the replacement snapshot supplies an authoritative `streamSeq`
-boundary. Jetstream remains an optional legacy/federation adapter.
+boundary. The normal getRepo snapshot path never fabricates that boundary;
+recovery therefore requires an explicit source provider that returns the
+snapshot together with the authoritative global sequence. Jetstream remains an
+optional legacy/federation adapter.
 
 Commit signature verification against resolved DID keys is intentionally
 deferred to a separate follow-up; this slice does not claim public federation

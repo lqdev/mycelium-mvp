@@ -47,11 +47,15 @@ describe('official AT Protocol repository snapshots', () => {
     const snapshot = await decodeProtocolRepoSnapshot(car, did);
     const appView = new ProtocolAppView();
 
-    appView.ingestSnapshot(snapshot.records);
+    appView.ingestSnapshot(snapshot.records, {
+      did: snapshot.did,
+      repoRev: snapshot.repoRev,
+    });
 
     expect(appView.health()).toMatchObject({
       recordCount: 2,
       quarantinedCount: 0,
+      repoRevs: { [did]: '3jzfcijyqzs2a' },
     });
     expect(appView.projectTasks()).toMatchObject([{
       taskUri: `at://${did}/me.lqdev.mycelium.task.offer/offer-1`,
