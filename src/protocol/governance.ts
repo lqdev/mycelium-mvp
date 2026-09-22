@@ -27,7 +27,11 @@ export function isDelegationActive(
     delegationEnvelope,
     COLLECTIONS.authorityDelegation,
   );
-  if (!delegation || new Date(delegation.expiresAt) <= now) return false;
+  if (
+    !delegation ||
+    new Date(delegation.createdAt) > now ||
+    new Date(delegation.expiresAt) <= now
+  ) return false;
 
   return !allRecords.some((envelope) => {
     const revocation = asRecord<AuthorityRevocation>(
@@ -35,6 +39,7 @@ export function isDelegationActive(
       COLLECTIONS.authorityRevocation,
     );
     return revocation?.delegationUri === delegationEnvelope.uri &&
+      revocation.revokerDid === delegation.delegatorDid &&
       new Date(revocation.createdAt) <= now;
   });
 }

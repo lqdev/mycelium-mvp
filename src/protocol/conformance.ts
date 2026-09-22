@@ -1,5 +1,5 @@
 import type { AgentIdentity, RecordResult, StoredRecord } from '../schemas/types.js';
-import { createMemoryRepository, getRecord, putRecord } from '../repository/index.js';
+import { createMemoryRepository, getRecord, listRecords, putRecord } from '../repository/index.js';
 import { createDemoPrincipals } from './fixtures.js';
 import {
   assertPermissionAllowed,
@@ -78,9 +78,11 @@ export class MemoryPdsConformanceAdapter implements PdsConformanceAdapter {
     rkey: string,
     record: unknown,
   ): Promise<RecordResult> {
-    assertPermissionAllowed(session.permissions, collection, 'create');
     const repo = this.repositories.get(session.did);
     if (!repo) throw new Error(`Unknown conformance session "${session.did}"`);
+    const operation: RepoAction = listRecords(repo, collection)
+      .some((stored) => stored.rkey === rkey) ? 'update' : 'create';
+    assertPermissionAllowed(session.permissions, collection, operation);
     return putRecord(repo, collection, rkey, record);
   }
 

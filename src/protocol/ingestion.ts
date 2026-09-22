@@ -30,6 +30,8 @@ export class ProtocolIngestor {
   private readonly bufferedEvents: ProtocolCommitEvent[] = [];
   private unsubscribe: (() => Promise<void>) | undefined;
   private acceptingLiveEvents = false;
+  private handoffInProgress = false;
+  private liveEventChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly source: PdsEventSource,
@@ -46,8 +48,8 @@ export class ProtocolIngestor {
     this.statusValue = { phase: 'snapshot', bufferedEvents: 0 };
     const savedCursors = await this.cursors.load();
 
-    this.unsubscribe = await this.source.subscribe(savedCursors, async (event) => {
-      if (!this.acceptingLiveEvents) {
+    this.unsubscribe = await this.source.subscribe(savedCursors, (event) => {
+      if (!this.acceptingLiveEvents || this.handoffInProgress) {
         this.bufferedEvents.push(event);
         this.statusValue = {
           ...this.statusValue,
@@ -55,8 +57,11 @@ export class ProtocolIngestor {
         };
         return;
       }
-      this.appView.ingest(event);
-      await this.cursors.save(this.appView.health().cursors);
+      this.liveEventChain = this.liveEventChain.then(async () => {
+        this.appView.ingest(event);
+        await this.cursors.save(this.appView.health().cursors);
+      });
+      return this.liveEventChain;
     });
 
     try {
@@ -64,14 +69,21 @@ export class ProtocolIngestor {
       this.appView.reset();
       this.appView.ingestSnapshot(snapshot);
       this.statusValue = { phase: 'replaying', bufferedEvents: this.bufferedEvents.length };
-      for (const event of this.bufferedEvents.splice(0).sort((a, b) =>
-        a.did.localeCompare(b.did) || a.seq - b.seq)) {
-        this.appView.ingest(event);
+      this.handoffInProgress = true;
+      while (this.bufferedEvents.length > 0) {
+        const events = this.bufferedEvents.splice(0).sort((a, b) =>
+          a.did.localeCompare(b.did) || a.seq - b.seq);
+        for (const event of events) {
+          this.appView.ingest(event);
+        }
+        await this.cursors.save(this.appView.health().cursors);
       }
-      await this.cursors.save(this.appView.health().cursors);
       this.acceptingLiveEvents = true;
+      this.handoffInProgress = false;
       this.statusValue = { phase: 'live', bufferedEvents: 0 };
     } catch (error) {
+      this.acceptingLiveEvents = false;
+      this.handoffInProgress = false;
       this.statusValue = {
         phase: 'stopped',
         bufferedEvents: this.bufferedEvents.length,
@@ -85,7 +97,9 @@ export class ProtocolIngestor {
 
   async stop(): Promise<void> {
     this.acceptingLiveEvents = false;
+    this.handoffInProgress = false;
     if (this.unsubscribe) await this.unsubscribe();
+    await this.liveEventChain;
     this.unsubscribe = undefined;
     this.statusValue = { phase: 'stopped', bufferedEvents: this.bufferedEvents.length };
   }

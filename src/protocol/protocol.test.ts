@@ -8,6 +8,7 @@ import {
   PermissionSetCache,
   ProtocolAppView,
   resolvePermissionScopes,
+  isDelegationActive,
   validateProtocolRecord,
 } from './index.js';
 import type {
@@ -272,5 +273,208 @@ describe('rebuildable AppView and governance', () => {
 
     expect(appView.projectTasks(new Date('2026-01-15T00:00:00.000Z'))[0]?.state).toBe('awarded');
     expect(appView.projectTasks(new Date('2026-02-15T00:00:00.000Z'))[0]?.state).toBe('claimed');
+  });
+
+  it('projects only task-linked completions and requester-authorized decisions', () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const otherRequester = generateIdentity('other-requester.demo.test', 'Other requester');
+    const workerA = generateIdentity('worker-a.demo.test', 'Worker A');
+    const workerB = generateIdentity('worker-b.demo.test', 'Worker B');
+    const taskUri = `at://${requester.did}/${COLLECTIONS.taskOffer}/task-1`;
+    const offer = {
+      $type: COLLECTIONS.taskOffer,
+      taskId: 'task-1',
+      title: 'Implement a feature',
+      description: 'A protocol test task',
+      requiredCapabilities: ['typescript'],
+      contextRefs: [],
+      deliverables: ['patch'],
+      requesterDid: requester.did,
+      governance: { mode: 'requester-selected' as const },
+      createdAt: now,
+    };
+    const claimA = {
+      $type: COLLECTIONS.taskClaim,
+      taskUri,
+      workerDid: workerA.did,
+      proposal: 'Worker A proposal',
+      createdAt: now,
+    };
+    const claimB = {
+      $type: COLLECTIONS.taskClaim,
+      taskUri,
+      workerDid: workerB.did,
+      proposal: 'Worker B proposal',
+      createdAt: now,
+    };
+    const invalidCompletion = {
+      $type: COLLECTIONS.taskCompletion,
+      taskUri,
+      claimUri: `at://${workerB.did}/${COLLECTIONS.taskClaim}/claim-b`,
+      workerDid: workerA.did,
+      summary: 'Mismatched claim',
+      artifactUris: [],
+      createdAt: now,
+    };
+    const invalidAcceptance = {
+      $type: COLLECTIONS.taskAcceptance,
+      taskUri,
+      completionUri: `at://${workerA.did}/${COLLECTIONS.taskCompletion}/completion-1`,
+      requesterDid: otherRequester.did,
+      outcome: 'accepted' as const,
+      createdAt: now,
+    };
+    const invalidCancellation = {
+      $type: COLLECTIONS.taskCancellation,
+      taskUri,
+      requesterDid: otherRequester.did,
+      reason: 'Unauthorized cancellation',
+      createdAt: now,
+    };
+
+    const invalidProjection = new ProtocolAppView();
+    invalidProjection.ingestSnapshot([
+      envelope(requester.did, COLLECTIONS.taskOffer, 'task-1', offer),
+      envelope(workerA.did, COLLECTIONS.taskClaim, 'claim-a', claimA),
+      envelope(workerB.did, COLLECTIONS.taskClaim, 'claim-b', claimB),
+      envelope(workerA.did, COLLECTIONS.taskCompletion, 'completion-1', invalidCompletion),
+      envelope(otherRequester.did, COLLECTIONS.taskAcceptance, 'acceptance-1', invalidAcceptance),
+      envelope(otherRequester.did, COLLECTIONS.taskCancellation, 'cancellation-1', invalidCancellation),
+    ]);
+
+    const invalidTask = invalidProjection.projectTasks()[0];
+    expect(invalidTask?.state).toBe('claimed');
+    expect(invalidTask?.conflictUris).toHaveLength(3);
+    expect(invalidTask?.completionUri).toBeUndefined();
+    expect(invalidTask?.acceptanceUri).toBeUndefined();
+
+    const validCompletion = {
+      ...invalidCompletion,
+      claimUri: `at://${workerA.did}/${COLLECTIONS.taskClaim}/claim-a`,
+    };
+    const validAcceptance = {
+      ...invalidAcceptance,
+      requesterDid: requester.did,
+      completionUri: `at://${workerA.did}/${COLLECTIONS.taskCompletion}/completion-1`,
+    };
+    const validProjection = new ProtocolAppView();
+    validProjection.ingestSnapshot([
+      envelope(requester.did, COLLECTIONS.taskOffer, 'task-1', offer),
+      envelope(workerA.did, COLLECTIONS.taskClaim, 'claim-a', claimA),
+      envelope(workerA.did, COLLECTIONS.taskCompletion, 'completion-1', validCompletion),
+      envelope(requester.did, COLLECTIONS.taskAcceptance, 'acceptance-1', validAcceptance),
+    ]);
+    expect(validProjection.projectTasks()[0]).toMatchObject({
+      state: 'accepted',
+      completionUri: `at://${workerA.did}/${COLLECTIONS.taskCompletion}/completion-1`,
+      acceptanceUri: `at://${requester.did}/${COLLECTIONS.taskAcceptance}/acceptance-1`,
+    });
+  });
+
+  it('quarantines snapshots whose envelope URI is not canonical', () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const offer: TaskOffer = {
+      $type: COLLECTIONS.taskOffer,
+      taskId: 'task-1',
+      title: 'Implement a feature',
+      description: 'A protocol test task',
+      requiredCapabilities: ['typescript'],
+      contextRefs: [],
+      deliverables: ['patch'],
+      requesterDid: requester.did,
+      governance: { mode: 'requester-selected' },
+      createdAt: now,
+    };
+    const appView = new ProtocolAppView();
+    appView.ingestSnapshot([{
+      ...envelope(requester.did, COLLECTIONS.taskOffer, 'task-1', offer),
+      uri: `at://did:key:z6MkOther/${COLLECTIONS.taskOffer}/task-1`,
+    }]);
+
+    expect(appView.listRecords()).toHaveLength(0);
+    expect(appView.listQuarantine()[0]?.reason).toMatch(/canonical URI/);
+  });
+
+  it('keeps recommendation scores aligned with the Lexicon integer bounds', () => {
+    const coordinator = generateIdentity('coordinator.demo.test', 'Coordinator');
+    const base = {
+      $type: COLLECTIONS.taskRecommendation,
+      taskUri: 'at://did:key:z6MkRequester/me.lqdev.mycelium.task.offer/task-1',
+      coordinatorDid: coordinator.did,
+      policy: 'highest-score',
+      rankedClaims: [{
+        claimUri: 'at://did:key:z6MkWorker/me.lqdev.mycelium.task.claim/claim-1',
+        workerDid: 'did:key:z6MkWorker',
+        score: 1,
+        reasons: ['valid'],
+      }],
+      createdAt: now,
+    };
+
+    expect(() => validateProtocolRecord(COLLECTIONS.taskRecommendation, {
+      ...base,
+      rankedClaims: [{ ...base.rankedClaims[0], score: 1.5 }],
+    }, coordinator.did)).toThrow();
+    expect(() => validateProtocolRecord(COLLECTIONS.taskRecommendation, {
+      ...base,
+      rankedClaims: [{ ...base.rankedClaims[0], score: 1_000_001 }],
+    }, coordinator.did)).toThrow();
+    expect(validateProtocolRecord(COLLECTIONS.taskRecommendation, {
+      ...base,
+      rankedClaims: [{ ...base.rankedClaims[0], score: 1_000_000 }],
+    }, coordinator.did)).toBeDefined();
+  });
+
+  it('does not activate future delegations or honor unrelated revocations', () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const otherRequester = generateIdentity('other-requester.demo.test', 'Other requester');
+    const coordinator = generateIdentity('coordinator.demo.test', 'Coordinator');
+    const delegation = {
+      $type: COLLECTIONS.authorityDelegation as const,
+      delegatorDid: requester.did,
+      delegateDid: coordinator.did,
+      scopes: [COLLECTIONS.taskAward],
+      createdAt: '2026-02-01T00:00:00.000Z',
+      expiresAt: '2026-03-01T00:00:00.000Z',
+    };
+    const delegationEnvelope = envelope(
+      requester.did,
+      COLLECTIONS.authorityDelegation,
+      'delegation-1',
+      delegation,
+    );
+    expect(isDelegationActive(
+      delegationEnvelope,
+      [delegationEnvelope],
+      new Date('2026-01-15T00:00:00.000Z'),
+    )).toBe(false);
+
+    const activeDelegation = {
+      ...delegation,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const activeEnvelope = envelope(
+      requester.did,
+      COLLECTIONS.authorityDelegation,
+      'delegation-2',
+      activeDelegation,
+    );
+    const unrelatedRevocation = envelope(
+      otherRequester.did,
+      COLLECTIONS.authorityRevocation,
+      'revocation-1',
+      {
+        $type: COLLECTIONS.authorityRevocation,
+        delegationUri: activeEnvelope.uri,
+        revokerDid: otherRequester.did,
+        reason: 'Unrelated principal',
+        createdAt: '2026-01-15T00:00:00.000Z',
+      },
+    );
+    expect(isDelegationActive(
+      activeEnvelope,
+      [activeEnvelope, unrelatedRevocation],
+      new Date('2026-01-20T00:00:00.000Z'),
+    )).toBe(true);
   });
 });

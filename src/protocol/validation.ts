@@ -66,7 +66,7 @@ const taskRecommendationSchema = z.object({
   rankedClaims: z.array(z.object({
     claimUri: atUri,
     workerDid: did,
-    score: z.number().finite(),
+    score: z.number().int().min(-1_000_000).max(1_000_000),
     reasons: z.array(z.string().min(1)),
   })),
   selectedClaimUri: atUri.optional(),

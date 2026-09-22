@@ -42,8 +42,12 @@ export interface AppViewHealth {
   projectionHash: string;
 }
 
+function canonicalUri(did: string, collection: string, rkey: string): string {
+  return `at://${did}/${collection}/${rkey}`;
+}
+
 function uriFor(event: ProtocolCommitEvent): string {
-  return `at://${event.did}/${event.collection}/${event.rkey}`;
+  return canonicalUri(event.did, event.collection, event.rkey);
 }
 
 function cidFor(record: unknown): string {
@@ -68,6 +72,23 @@ export class ProtocolAppView {
   ingestSnapshot(snapshot: ReadonlyArray<ProtocolRecordEnvelope>): void {
     const ordered = [...snapshot].sort((a, b) => a.uri.localeCompare(b.uri));
     for (const envelope of ordered) {
+      const expectedUri = canonicalUri(envelope.did, envelope.collection, envelope.rkey);
+      if (envelope.uri !== expectedUri) {
+        this.quarantine.push({
+          event: {
+            seq: 0,
+            did: envelope.did,
+            collection: envelope.collection,
+            rkey: envelope.rkey,
+            operation: 'create',
+            record: envelope.record,
+            cid: envelope.cid,
+            timestamp: new Date().toISOString(),
+          },
+          reason: `snapshot URI does not match canonical URI "${expectedUri}"`,
+        });
+        continue;
+      }
       try {
         const record = validateProtocolRecord(envelope.collection, envelope.record, envelope.did);
         this.records.set(envelope.uri, { ...envelope, record });
@@ -193,18 +214,40 @@ export class ProtocolAppView {
       });
       const taskCompletions = completions.filter((completion) =>
         completion.record.taskUri === offerEnvelope.uri);
+      const validCompletions = taskCompletions.filter((completion) =>
+        taskClaims.some((claim) =>
+          claim.uri === completion.record.claimUri &&
+          claim.record.taskUri === offerEnvelope.uri &&
+          claim.record.workerDid === completion.record.workerDid));
+      const invalidCompletionUris = taskCompletions
+        .filter((completion) => !validCompletions.some((valid) => valid.uri === completion.uri))
+        .map((completion) => completion.uri);
       const taskAcceptances = acceptances.filter((acceptance) =>
-        acceptance.record.taskUri === offerEnvelope.uri);
+        acceptance.record.taskUri === offerEnvelope.uri &&
+        acceptance.record.requesterDid === offer.requesterDid &&
+        validCompletions.some((completion) => completion.uri === acceptance.record.completionUri));
+      const invalidAcceptanceUris = acceptances
+        .filter((acceptance) =>
+          acceptance.record.taskUri === offerEnvelope.uri &&
+          !taskAcceptances.some((valid) => valid.uri === acceptance.uri))
+        .map((acceptance) => acceptance.uri);
       const taskCancellations = cancellations.filter((cancellation) =>
-        cancellation.record.taskUri === offerEnvelope.uri);
+        cancellation.record.taskUri === offerEnvelope.uri &&
+        cancellation.record.requesterDid === offer.requesterDid);
+      const invalidCancellationUris = cancellations
+        .filter((cancellation) =>
+          cancellation.record.taskUri === offerEnvelope.uri &&
+          !taskCancellations.some((valid) => valid.uri === cancellation.uri))
+        .map((cancellation) => cancellation.uri);
       const conflicts = taskAwards
         .filter((award) => !authorizedAwards.some((authorized) => authorized.uri === award.uri))
-        .map((award) => award.uri);
+        .map((award) => award.uri)
+        .concat(invalidCompletionUris, invalidAcceptanceUris, invalidCancellationUris);
 
       let state: TaskState = 'open';
       if (taskCancellations.length > 0) state = 'cancelled';
       else if (taskAcceptances.some((acceptance) => acceptance.record.outcome === 'accepted')) state = 'accepted';
-      else if (taskCompletions.length > 0) state = 'submitted';
+      else if (validCompletions.length > 0) state = 'submitted';
       else if (authorizedAwards.length > 0) state = 'awarded';
       else if (taskClaims.length > 0) state = 'claimed';
 
@@ -213,7 +256,16 @@ export class ProtocolAppView {
         `Claims observed: ${taskClaims.length}`,
         `Authorized awards: ${authorizedAwards.length}`,
       ];
-      if (conflicts.length > 0) explanation.push(`Unauthorized or conflicting awards: ${conflicts.length}`);
+      if (conflicts.length > 0) explanation.push(`Unauthorized or conflicting facts: ${conflicts.length}`);
+      if (invalidCompletionUris.length > 0) {
+        explanation.push(`Invalid completion references: ${invalidCompletionUris.length}`);
+      }
+      if (invalidAcceptanceUris.length > 0) {
+        explanation.push(`Invalid acceptance references: ${invalidAcceptanceUris.length}`);
+      }
+      if (invalidCancellationUris.length > 0) {
+        explanation.push(`Invalid cancellation references: ${invalidCancellationUris.length}`);
+      }
       if (taskCancellations.length > 0) explanation.push('A requester cancellation supersedes active work.');
 
       const projection: TaskProjection = {
@@ -225,7 +277,7 @@ export class ProtocolAppView {
         explanation,
       };
       const awardUri = authorizedAwards[0]?.uri;
-      const completionUri = taskCompletions[0]?.uri;
+      const completionUri = validCompletions[0]?.uri;
       const acceptanceUri = taskAcceptances[0]?.uri;
       if (awardUri) projection.awardUri = awardUri;
       if (completionUri) projection.completionUri = completionUri;
