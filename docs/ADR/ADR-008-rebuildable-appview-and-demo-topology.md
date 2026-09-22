@@ -1,6 +1,7 @@
 # ADR-008: Rebuildable AppView and low-cost live topology
 
-**Status:** Accepted  
+**Status:** Accepted
+
 **Date:** 2026-09-21
 
 ## Context

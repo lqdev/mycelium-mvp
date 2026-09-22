@@ -1,6 +1,7 @@
 # ADR-006: Protocol 0.1 principals and authorship
 
-**Status:** Accepted  
+**Status:** Accepted
+
 **Date:** 2026-09-21
 
 ## Context
