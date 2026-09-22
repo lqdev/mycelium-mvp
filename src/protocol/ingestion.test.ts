@@ -12,20 +12,66 @@ import type { ProtocolCommitEvent } from './appview.js';
 import type { ProtocolRecordEnvelope } from './types.js';
 import { createDuckDB } from '../storage/duckdb.js';
 import { DuckDbCursorStore } from './ingestion.js';
-import type { ProtocolRepoSnapshot } from '../atproto/repo-snapshot.js';
+import type {
+  AuthoritativeRecoverySnapshot,
+  ProtocolRepoSnapshot,
+} from '../atproto/repo-snapshot.js';
 
 function metadataSnapshot(
   did: string,
   records: ReadonlyArray<ProtocolRecordEnvelope>,
-  streamSeq?: number,
 ): ProtocolRepoSnapshot {
   return {
     did,
     repoRev: 'repo-rev-snapshot',
-    ...(streamSeq === undefined ? {} : { streamSeq }),
     rootCid: 'bafyreibqlm3quhnjyhqlsjj24uauvaoonmyi3jfkzqr44mzecn2yq2xpmu',
     records,
     quarantined: [],
+  };
+}
+
+function authoritativeSnapshot(
+  snapshot: ProtocolRepoSnapshot,
+  streamSeq: number,
+): AuthoritativeRecoverySnapshot {
+  return {
+    snapshot,
+    boundary: {
+      streamSeq,
+      repoDid: snapshot.did,
+      repoRev: snapshot.repoRev,
+      proof: `fixture:${snapshot.did}:${snapshot.repoRev}:${streamSeq}`,
+    },
+  };
+}
+
+function fixtureRecoveryProvider(
+  recovery: AuthoritativeRecoverySnapshot |
+    (() => AuthoritativeRecoverySnapshot | Promise<AuthoritativeRecoverySnapshot>),
+) {
+  return {
+    async recover() {
+      return typeof recovery === 'function' ? recovery() : recovery;
+    },
+    async verifyBoundary(candidate: AuthoritativeRecoverySnapshot) {
+      return candidate.boundary.proof ===
+        `fixture:${candidate.snapshot.did}:${candidate.snapshot.repoRev}:${candidate.boundary.streamSeq}`;
+    },
+  };
+}
+
+function taskOffer(did: string, taskId: string): Record<string, unknown> {
+  return {
+    $type: COLLECTIONS.taskOffer,
+    taskId,
+    title: 'Recovery test task',
+    description: 'A task used to verify replay completeness',
+    requiredCapabilities: ['typescript'],
+    contextRefs: [],
+    deliverables: ['patch'],
+    requesterDid: did,
+    governance: { mode: 'requester-selected' },
+    createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -88,6 +134,17 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
       const store = new DuckDbCursorStore(conn);
       await store.save(42);
       await expect(store.load()).resolves.toBe(42);
+    } finally {
+      instance.closeSync();
+    }
+  });
+
+  it('persists the maximum cursor under concurrent out-of-order saves', async () => {
+    const { instance, conn } = await createDuckDB();
+    try {
+      const store = new DuckDbCursorStore(conn);
+      await Promise.all([store.save(17), store.save(91), store.save(42), store.save(63)]);
+      await expect(store.load()).resolves.toBe(91);
     } finally {
       instance.closeSync();
     }
@@ -223,11 +280,11 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
         emit = onEvent;
         return async () => {};
       },
-      async recover() {
+      authoritativeRecovery: fixtureRecoveryProvider(async () => {
         recoveryStarted();
         await recoveryRelease;
-        return metadataSnapshot(requester.did, [], 10);
-      },
+        return authoritativeSnapshot(metadataSnapshot(requester.did, []), 10);
+      }),
     };
     const appView = new ProtocolAppView();
     const ingestor = new ProtocolIngestor(source, appView, new MemoryCursorStore());
@@ -264,6 +321,345 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
     expect(appView.listRecords()).toHaveLength(1);
   });
 
+  it('skips an equal-boundary tooBig marker without retrying recovery', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    let recoveryCalls = 0;
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, []);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+      authoritativeRecovery: fixtureRecoveryProvider(() => {
+        recoveryCalls++;
+        return authoritativeSnapshot(metadataSnapshot(requester.did, []), 10);
+      }),
+    };
+    const ingestor = new ProtocolIngestor(source, new ProtocolAppView(), new MemoryCursorStore());
+    await ingestor.start();
+
+    const recovery = emit?.({
+      streamSeq: 10,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:10.000Z',
+    });
+    if (recovery !== undefined) await recovery;
+
+    expect(recoveryCalls).toBe(1);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'live',
+      streamSeq: 10,
+      bufferedEvents: 0,
+      recoveryRequired: false,
+    });
+  });
+
+  it('replays an ordinary event at the authoritative boundary', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const record = taskOffer(requester.did, 'replayed-at-boundary');
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    let recoveryStarted!: () => void;
+    let releaseRecovery!: () => void;
+    const recoveryStartedPromise = new Promise<void>((resolve) => { recoveryStarted = resolve; });
+    const recoveryRelease = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, []);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+      authoritativeRecovery: fixtureRecoveryProvider(async () => {
+        recoveryStarted();
+        await recoveryRelease;
+        return authoritativeSnapshot(metadataSnapshot(requester.did, []), 20);
+      }),
+    };
+    const appView = new ProtocolAppView();
+    const ingestor = new ProtocolIngestor(source, appView, new MemoryCursorStore());
+    await ingestor.start();
+
+    const recovery = emit?.({
+      streamSeq: 20,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:20.000Z',
+    });
+    await recoveryStartedPromise;
+    emit?.({
+      streamSeq: 20,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'replayed-at-boundary',
+      operation: 'create',
+      record,
+      timestamp: '2026-01-01T00:00:20.000Z',
+    });
+    releaseRecovery();
+    if (recovery !== undefined) await recovery;
+
+    expect(appView.listRecords()).toHaveLength(1);
+    expect(appView.listRecords()[0]?.record).toEqual(record);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'live',
+      streamSeq: 20,
+      recoveryRequired: false,
+    });
+  });
+
+  it('fails closed when recovery is requested without an authoritative provider', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, []);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+    };
+    const ingestor = new ProtocolIngestor(source, new ProtocolAppView(), new MemoryCursorStore());
+    await ingestor.start();
+
+    const recovery = emit?.({
+      streamSeq: 10,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:10.000Z',
+    });
+    if (recovery !== undefined) await recovery;
+
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      lastError: 'snapshot recovery requires an authoritative recovery provider; getRepo has no authoritative streamSeq boundary',
+    });
+  });
+
+  it('closes the subscription and ignores events after live recovery failure', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    let unsubscribeCalls = 0;
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, []);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {
+          unsubscribeCalls++;
+        };
+      },
+      authoritativeRecovery: {
+        async recover() {
+          throw new Error('authoritative recovery unavailable');
+        },
+        async verifyBoundary() {
+          return true;
+        },
+      },
+    };
+    const ingestor = new ProtocolIngestor(source, new ProtocolAppView(), new MemoryCursorStore());
+    await ingestor.start();
+
+    const failure = emit?.({
+      streamSeq: 10,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:10.000Z',
+    });
+    if (failure !== undefined) await failure;
+
+    expect(unsubscribeCalls).toBe(1);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      bufferedEvents: 1,
+      lastError: 'authoritative recovery unavailable',
+    });
+    const bufferedAfterFailure = ingestor.status().bufferedEvents;
+    await emit?.({
+      streamSeq: 11,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'ignored-after-failure',
+      operation: 'delete',
+      timestamp: '2026-01-01T00:00:11.000Z',
+    });
+    expect(ingestor.status().bufferedEvents).toBe(bufferedAfterFailure);
+    expect(unsubscribeCalls).toBe(1);
+  });
+
+  it('rejects an unverified boundary before replacing state or advancing the cursor', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const existingRecord = taskOffer(requester.did, 'existing-before-recovery');
+    const existingEnvelope: ProtocolRecordEnvelope = {
+      uri: `at://${requester.did}/${COLLECTIONS.taskOffer}/existing-before-recovery`,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'existing-before-recovery',
+      cid: 'cid-existing-before-recovery',
+      record: existingRecord,
+    };
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, [existingEnvelope]);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+      authoritativeRecovery: {
+        async recover() {
+          return authoritativeSnapshot(metadataSnapshot(requester.did, []), 10);
+        },
+        async verifyBoundary() {
+          return false;
+        },
+      },
+    };
+    const appView = new ProtocolAppView();
+    const cursors = new MemoryCursorStore();
+    const ingestor = new ProtocolIngestor(source, appView, cursors);
+    await ingestor.start();
+
+    const recovery = emit?.({
+      streamSeq: 10,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:10.000Z',
+    });
+    if (recovery !== undefined) await recovery;
+
+    expect(appView.listRecords()).toHaveLength(1);
+    await expect(cursors.load()).resolves.toBeUndefined();
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      lastError: 'snapshot recovery boundary failed provider verification',
+    });
+  });
+
+  it('rejects malformed recovery envelopes before replacing state or advancing the cursor', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const existingRecord = taskOffer(requester.did, 'existing-before-malformed-recovery');
+    const existingEnvelope: ProtocolRecordEnvelope = {
+      uri: `at://${requester.did}/${COLLECTIONS.taskOffer}/existing-before-malformed-recovery`,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'existing-before-malformed-recovery',
+      cid: 'cid-existing-before-malformed-recovery',
+      record: existingRecord,
+    };
+    const malformedSnapshot = {
+      ...metadataSnapshot(requester.did, []),
+      records: [null],
+    };
+    const malformedRecovery = {
+      snapshot: malformedSnapshot,
+      boundary: {
+        streamSeq: 10,
+        repoDid: requester.did,
+        repoRev: malformedSnapshot.repoRev,
+        proof: 'fixture:malformed',
+      },
+    } as unknown as AuthoritativeRecoverySnapshot;
+    let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
+    const cursors = new MemoryCursorStore();
+    await cursors.save(7);
+    const source: PdsEventSource = {
+      async snapshot() {
+        return metadataSnapshot(requester.did, [existingEnvelope]);
+      },
+      async subscribe(_cursor, onEvent) {
+        emit = onEvent;
+        return async () => {};
+      },
+      authoritativeRecovery: {
+        async recover() {
+          return malformedRecovery;
+        },
+        async verifyBoundary() {
+          return true;
+        },
+      },
+    };
+    const appView = new ProtocolAppView();
+    const ingestor = new ProtocolIngestor(source, appView, cursors);
+    await ingestor.start();
+    const projectionBeforeRecovery = appView.projectionHash();
+
+    const recovery = emit?.({
+      streamSeq: 8,
+      did: requester.did,
+      collection: '',
+      rkey: '',
+      operation: 'create',
+      tooBig: true,
+      timestamp: '2026-01-01T00:00:08.000Z',
+    });
+    if (recovery !== undefined) await recovery;
+
+    expect(appView.projectionHash()).toBe(projectionBeforeRecovery);
+    expect(appView.listRecords()).toHaveLength(1);
+    await expect(cursors.load()).resolves.toBe(7);
+    expect(ingestor.status()).toMatchObject({
+      phase: 'stopped',
+      lastError: 'snapshot recovery boundary is malformed or does not match repoRev',
+    });
+  });
+
+  it('rejects malformed array snapshots before resetting the AppView', async () => {
+    const requester = generateIdentity('requester.demo.test', 'Requester');
+    const existingRecord = taskOffer(requester.did, 'existing-before-array-snapshot');
+    const existingEnvelope: ProtocolRecordEnvelope = {
+      uri: `at://${requester.did}/${COLLECTIONS.taskOffer}/existing-before-array-snapshot`,
+      did: requester.did,
+      collection: COLLECTIONS.taskOffer,
+      rkey: 'existing-before-array-snapshot',
+      cid: 'cid-existing-before-array-snapshot',
+      record: existingRecord,
+    };
+    const cursors = new MemoryCursorStore();
+    await cursors.save(7);
+    const source: PdsEventSource = {
+      async snapshot() {
+        return [null] as unknown as ReadonlyArray<ProtocolRecordEnvelope>;
+      },
+      async subscribe() {
+        return async () => {};
+      },
+    };
+    const appView = new ProtocolAppView();
+    appView.ingestSnapshot([existingEnvelope]);
+    const projectionBeforeSnapshot = appView.projectionHash();
+    const ingestor = new ProtocolIngestor(source, appView, cursors);
+
+    await expect(ingestor.start()).rejects.toThrow('repository snapshot is malformed');
+    expect(appView.projectionHash()).toBe(projectionBeforeSnapshot);
+    expect(appView.listRecords()).toHaveLength(1);
+    await expect(cursors.load()).resolves.toBe(7);
+  });
+
   it('rejects a recovery boundary behind the durable cursor without regressing it', async () => {
     const requester = generateIdentity('requester.demo.test', 'Requester');
     let emit: ((event: ProtocolCommitEvent) => void | Promise<void>) | undefined;
@@ -275,12 +671,9 @@ describe('Protocol 0.1 snapshot/live ingestion', () => {
         emit = onEvent;
         return async () => {};
       },
-      async recover() {
-        return {
-          ...metadataSnapshot(requester.did, [], 49),
-          streamSeq: 49,
-        };
-      },
+      authoritativeRecovery: fixtureRecoveryProvider(
+        authoritativeSnapshot(metadataSnapshot(requester.did, []), 49),
+      ),
     };
     const cursors = new MemoryCursorStore();
     await cursors.save(50);

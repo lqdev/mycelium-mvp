@@ -5,7 +5,11 @@ import type {
   IngestionDiagnostic,
   PdsEventSource,
 } from '../protocol/ingestion.js';
-import type { ProtocolRepoSnapshot, AtprotoRepoSnapshotAdapter } from './repo-snapshot.js';
+import type {
+  AtprotoRepoSnapshotAdapter,
+  AuthoritativeRecoveryProvider,
+  ProtocolRepoSnapshot,
+} from './repo-snapshot.js';
 
 export interface SubscribeReposSocket {
   readonly readyState?: number;
@@ -22,7 +26,7 @@ export interface SubscribeReposSocketEvent {
 export interface SubscribeReposSourceOptions {
   endpoint: string;
   snapshot: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
-  recover?: (reason: string) => Promise<ProtocolRepoSnapshot & { streamSeq: number }>;
+  authoritativeRecovery?: AuthoritativeRecoveryProvider;
   websocketFactory?: (url: string) => SubscribeReposSocket;
 }
 
@@ -80,28 +84,18 @@ export async function decodeSubscribeReposFrame(raw: Uint8Array): Promise<Subscr
 export class AtprotoSubscribeReposSource implements PdsEventSource {
   private readonly endpoint: string;
   private readonly snapshotAdapter: Pick<AtprotoRepoSnapshotAdapter, 'snapshotWithMetadata'>;
-  private readonly recoverySource:
-    ((reason: string) => Promise<ProtocolRepoSnapshot & { streamSeq: number }>) | undefined;
   private readonly websocketFactory: (url: string) => SubscribeReposSocket;
+  readonly authoritativeRecovery: AuthoritativeRecoveryProvider | undefined;
 
   constructor(options: SubscribeReposSourceOptions) {
     this.endpoint = toSubscribeReposEndpoint(options.endpoint);
     this.snapshotAdapter = options.snapshot;
-    this.recoverySource = options.recover;
+    this.authoritativeRecovery = options.authoritativeRecovery;
     this.websocketFactory = options.websocketFactory ?? ((url) => new WebSocket(url));
   }
 
   async snapshot(): Promise<ProtocolRepoSnapshot> {
     return this.snapshotAdapter.snapshotWithMetadata();
-  }
-
-  async recover(reason: string): Promise<ProtocolRepoSnapshot & { streamSeq: number }> {
-    if (this.recoverySource === undefined) {
-      throw new Error(
-        `subscribeRepos recovery is unavailable for "${reason}": getRepo has no authoritative streamSeq`,
-      );
-    }
-    return this.recoverySource(reason);
   }
 
   async subscribe(
@@ -116,6 +110,8 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     let openSettled = false;
     let hasOpened = false;
     let intentionallyClosed = false;
+    let handlingMessage = false;
+    let socketClosed = false;
     let resolveOpen!: () => void;
     let rejectOpen!: (error: Error) => void;
     const opened = new Promise<void>((resolve, reject) => {
@@ -160,7 +156,14 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     });
     socket.addEventListener('message', (event) => {
       messageChain = messageChain
-        .then(() => this.handleMessage(event.data, onEvent, onDiagnostic))
+        .then(async () => {
+          handlingMessage = true;
+          try {
+            await this.handleMessage(event.data, onEvent, onDiagnostic);
+          } finally {
+            handlingMessage = false;
+          }
+        })
         .catch((error: unknown) => {
           onDiagnostic?.({
             kind: 'frame',
@@ -187,8 +190,11 @@ export class AtprotoSubscribeReposSource implements PdsEventSource {
     }
     return async () => {
       intentionallyClosed = true;
-      await messageChain;
-      socket.close();
+      if (!socketClosed) {
+        socketClosed = true;
+        socket.close();
+      }
+      if (!handlingMessage) await messageChain;
     };
   }
 

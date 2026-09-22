@@ -14,11 +14,40 @@ export interface ProtocolRepoSnapshot {
   did: string;
   /** Signed per-repository revision from the getRepo commit. */
   repoRev: string;
-  /** Global subscribeRepos sequence when a source can provide one. */
-  streamSeq?: number;
   rootCid: string;
   records: ReadonlyArray<ProtocolRecordEnvelope>;
   quarantined: ReadonlyArray<SnapshotQuarantine>;
+}
+
+/**
+ * A provider-issued assertion that a repository snapshot and global firehose
+ * checkpoint describe one consistent point in the provider's source of truth.
+ *
+ * `repoRev` identifies the signed repository commit in the CAR. `streamSeq`
+ * identifies the global subscribeRepos position. They are intentionally
+ * separate values even when a provider can verify them together.
+ */
+export interface AuthoritativeStreamBoundary {
+  readonly streamSeq: number;
+  readonly repoDid: string;
+  readonly repoRev: string;
+  /** Opaque provider-issued proof checked by AuthoritativeRecoveryProvider. */
+  readonly proof: string;
+}
+
+export interface AuthoritativeRecoverySnapshot {
+  readonly snapshot: ProtocolRepoSnapshot;
+  readonly boundary: AuthoritativeStreamBoundary;
+}
+
+/**
+ * The production boundary is an injected capability. This repository does
+ * not invent an upstream endpoint that atomically pairs getRepo with
+ * subscribeRepos; a deployment must provide and verify that capability.
+ */
+export interface AuthoritativeRecoveryProvider {
+  recover(reason: string): Promise<AuthoritativeRecoverySnapshot>;
+  verifyBoundary(recovery: AuthoritativeRecoverySnapshot): Promise<boolean>;
 }
 
 export interface RepoSnapshotAdapterOptions {
@@ -31,8 +60,8 @@ export interface RepoSnapshotAdapterOptions {
  * Reads the official com.atproto.sync.getRepo CAR export for one repository.
  *
  * getRepo exposes a signed repository revision, not a global subscribeRepos
- * sequence. The adapter therefore returns `repoRev`; streamSeq is populated
- * only by a source that has an authoritative firehose boundary.
+ * sequence. The adapter therefore returns only `repoRev`; a global
+ * `streamSeq` is populated only by an authoritative recovery provider.
  */
 export class AtprotoRepoSnapshotAdapter {
   private readonly endpoint: string;

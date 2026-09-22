@@ -30,7 +30,8 @@ snapshot/events must produce the same projection hash.
 The snapshot boundary is explicit: `AtprotoRepoSnapshotAdapter` fetches the
 official `com.atproto.sync.getRepo` CAR, traverses the repository MST with the
 official AT Protocol repository package, and preserves the signed commit
-revision as `repoRev`. That revision is not a global stream cursor.
+revision as `repoRev`. That revision is not a global stream cursor, and a
+normal snapshot has no `streamSeq` field.
 
 `AtprotoSubscribeReposSource` implements the official
 `com.atproto.sync.subscribeRepos` WebSocket protocol. Frames use concatenated
@@ -39,11 +40,25 @@ record CIDs and paths. `ProtocolIngestor` persists the numeric global `seq`,
 buffers frames while getRepo loads, replays in stream order, and reports
 identity/account/handle/info/unknown frames as diagnostics. A sequence gap or
 `tooBig` commit triggers snapshot recovery and is not considered recovered
-unless the replacement snapshot supplies an authoritative `streamSeq`
-boundary. The normal getRepo snapshot path never fabricates that boundary;
-recovery therefore requires an explicit source provider that returns the
-snapshot together with the authoritative global sequence. Jetstream remains an
-optional legacy/federation adapter.
+unless an injected `AuthoritativeRecoveryProvider` returns a snapshot plus a
+verifiable boundary. The boundary carries the snapshot DID, its `repoRev`, the
+global `streamSeq`, and a provider proof; the provider verifier must establish
+that the proof covers the exact snapshot and stream position. Malformed,
+unverified, or regressing boundaries are rejected before AppView replacement
+or durable cursor advancement. Replay skips only equal-or-older `tooBig`
+markers already covered by the boundary, preserves ordinary events at or after
+the boundary, and fails closed when repeated recovery does not advance it.
+The normal getRepo snapshot path never fabricates a global boundary, and
+`lastObservedStreamSeq` is never used as one. Without the provider, recovery
+fails explicitly. Jetstream remains an optional legacy/federation adapter.
+
+There is no upstream AT Protocol endpoint assumed here that atomically pairs
+`getRepo` with a global `subscribeRepos` sequence. Production deployment
+therefore requires an external relay/PDS companion or equivalent checkpoint
+service with an auditable consistency proof, wired through
+`AuthoritativeRecoveryProvider`. Until that prerequisite exists, this MVP
+supports initial getRepo loading and live subscription only; it must stop
+instead of attempting unsafe gap recovery.
 
 Commit signature verification against resolved DID keys is intentionally
 deferred to a separate follow-up; this slice does not claim public federation

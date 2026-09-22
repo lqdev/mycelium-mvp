@@ -220,10 +220,10 @@ AT Protocol repository/MST implementation to decode a real CAR export. It
 preserves the repository DID, collection, record key, record CID, and signed
 commit revision as `repoRev` before handing validated
 `ProtocolRecordEnvelope` values to `ProtocolAppView`. A getRepo revision is
-per-repository metadata, not a firehose cursor; `streamSeq` is only populated
-when a source has a global subscribeRepos boundary. Unsupported collections,
-malformed records, and authorship failures are reported in the snapshot
-quarantine instead of being silently accepted.
+per-repository metadata, not a firehose cursor; ordinary snapshots cannot
+carry a `streamSeq` field. Unsupported collections, malformed records, and
+authorship failures are reported in the snapshot quarantine instead of being
+silently accepted.
 
 `AtprotoSubscribeReposSource` in `src/atproto/subscribe-repos.ts` consumes the
 official `com.atproto.sync.subscribeRepos` WebSocket format: each frame is two
@@ -234,11 +234,29 @@ operations while preserving the global `seq`, commit CID, repository `rev`,
 unknown frames become observable ingestion diagnostics. `ProtocolIngestor`
 persists one numeric `streamSeq` per subscription, buffers during snapshot
 load, deduplicates replay, and requires a fresh snapshot with an authoritative
-stream boundary after a gap or `tooBig` commit. A plain getRepo snapshot never
-supplies that boundary; recovery must be provided by a source that can return a
-snapshot paired with an authoritative global stream sequence. Jetstream remains
-an optional legacy integration and is not a substitute for this direct cursor
-handoff.
+stream boundary after a gap or `tooBig` commit. The injected
+`AuthoritativeRecoveryProvider` must return a repository snapshot plus an
+authoritative boundary containing `repoDid`, the signed snapshot `repoRev`,
+the global `streamSeq`, and an opaque provider proof. Its verifier must confirm
+that the proof covers that exact snapshot and global position; the ingestor
+rejects malformed, unverified, or non-monotonic boundaries before replacing
+AppView state or advancing the durable cursor. It replays buffered events in
+sequence order, skips only equal-or-older `tooBig` markers already covered by
+the boundary, replays ordinary events at the boundary or later, and fails
+closed if repeated recovery makes no boundary progress. A plain getRepo
+snapshot never supplies that boundary, and `lastObservedStreamSeq` is never
+used to infer one. Without an injected provider, recovery stops with an
+explicit error rather than guessing. Jetstream remains an optional legacy
+integration and is not a substitute for this direct cursor handoff.
+
+The current repository deliberately does not claim a production provider:
+AT Protocol `getRepo` and `subscribeRepos` do not expose an atomic
+snapshot-plus-global-sequence endpoint. A deployment must operate or trust a
+provider that can make that consistency guarantee (for example, a relay/PDS
+companion checkpoint service) and implement `AuthoritativeRecoveryProvider`
+with proof verification. Until that service exists, initial getRepo loading and
+live ingestion are supported, but gap/`tooBig` recovery is intentionally
+unavailable.
 
 Commit signature verification against resolved DID keys is deliberately
 deferred to a separate follow-up. This slice therefore does not claim public
