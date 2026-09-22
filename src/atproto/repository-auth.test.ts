@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import {
+  bytesToMultibase,
   formatDidKey,
   P256Keypair,
   parseDidKey,
+  parseMultikey,
 } from '@atproto/crypto';
 import {
   getFullRepo,
@@ -153,5 +155,26 @@ describe('AT Protocol repository commit authentication', () => {
       carBytes: fixture.carBytes,
       operations: [],
     })).rejects.toThrow(/does not match CAR root/);
+  });
+
+  it('accepts the deployed #atproto key without requiring assertionMethod', async () => {
+    const fixture = await makeSignedRepository();
+    const parsed = parseMultikey(fixture.document.verificationMethod[0]!.publicKeyMultibase!);
+    const verifier = new AtprotoRepositoryCommitVerifier({
+      async resolve() {
+        return {
+          id: did,
+          verificationMethod: [{
+            id: `${did}#atproto`,
+            type: 'EcdsaSecp256r1VerificationKey2019',
+            controller: did,
+            publicKeyMultibase: bytesToMultibase(parsed.keyBytes, 'base58btc'),
+          }],
+        };
+      },
+    });
+
+    await expect(verifier.verifySnapshot(fixture.carBytes, did))
+      .resolves.toMatchObject({ did, commitCid: fixture.repo.cid.toString() });
   });
 });

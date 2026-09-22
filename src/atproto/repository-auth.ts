@@ -1,4 +1,11 @@
-import { formatDidKey, parseMultikey } from '@atproto/crypto';
+import {
+  bytesToMultibase,
+  formatDidKey,
+  multibaseToBytes,
+  parseMultikey,
+  P256_JWT_ALG,
+  SECP256K1_JWT_ALG,
+} from '@atproto/crypto';
 import {
   type BlockMap,
   readCarWithRoot,
@@ -17,8 +24,7 @@ export interface DidVerificationMethod {
 
 export interface DidDocument {
   readonly id: string;
-  readonly verificationMethod: ReadonlyArray<DidVerificationMethod>;
-  readonly assertionMethod?: ReadonlyArray<string | DidVerificationMethod> | undefined;
+  readonly verificationMethod?: ReadonlyArray<DidVerificationMethod> | undefined;
 }
 
 /**
@@ -98,18 +104,10 @@ export class AtprotoDidDocumentKeyResolver implements RepositoryVerificationKeyR
       throw new Error(`DID document id "${document.id}" does not match repository DID "${did}"`);
     }
 
-    const authorizedIds = new Set(
-      (document.assertionMethod ?? [])
-        .map((method) => typeof method === 'string' ? method : method.id)
-        .map((id) => id.startsWith('#') ? `${did}${id}` : id),
-    );
-    const methods = document.verificationMethod
+    const methods = (document.verificationMethod ?? [])
       .filter((method) => {
         const absoluteId = method.id.startsWith('#') ? `${did}${method.id}` : method.id;
-        return absoluteId.endsWith('#atproto') &&
-          method.type === 'Multikey' &&
-          method.controller === did &&
-          authorizedIds.has(absoluteId);
+        return absoluteId === `${did}#atproto` && method.controller === did;
       });
     if (methods.length === 0) {
       throw new Error(`DID document for "${did}" has no authorized #atproto Multikey`);
@@ -119,7 +117,7 @@ export class AtprotoDidDocumentKeyResolver implements RepositoryVerificationKeyR
       if (method.publicKeyMultibase === undefined) {
         throw new Error(`DID verification method "${method.id}" has no publicKeyMultibase`);
       }
-      const parsed = parseMultikey(method.publicKeyMultibase);
+      const parsed = parseVerificationKey(method.type, method.publicKeyMultibase);
       return {
         id: method.id.startsWith('#') ? `${did}${method.id}` : method.id,
         didKey: formatDidKey(parsed.jwtAlg, parsed.keyBytes),
@@ -127,6 +125,22 @@ export class AtprotoDidDocumentKeyResolver implements RepositoryVerificationKeyR
     });
   }
 
+}
+
+function parseVerificationKey(type: string, publicKeyMultibase: string): {
+  jwtAlg: string;
+  keyBytes: Uint8Array;
+} {
+  if (type === 'Multikey') {
+    return parseMultikey(publicKeyMultibase);
+  }
+  if (type === 'EcdsaSecp256r1VerificationKey2019') {
+    return { jwtAlg: P256_JWT_ALG, keyBytes: multibaseToBytes(publicKeyMultibase) };
+  }
+  if (type === 'EcdsaSecp256k1VerificationKey2019') {
+    return { jwtAlg: SECP256K1_JWT_ALG, keyBytes: multibaseToBytes(publicKeyMultibase) };
+  }
+  throw new Error(`unsupported AT Protocol verification method type "${type}"`);
 }
 
 /**
